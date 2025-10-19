@@ -74,6 +74,7 @@ const struct iterator_ctl seq_iterator_ctl = {
 
 struct random_iterator {
     long i;
+    long n;
     long* arr;
 };
 
@@ -85,21 +86,28 @@ void* init_random_iterator(long size) {
 
     data = (struct random_iterator*)it;
     data->i = 0;
+    data->n = size;
     data->arr = malloc(sizeof(long)*size);
     if (data->arr == NULL) {
         free(it);
         return NULL;
     }
 
+    for (long i=0; i < size; i++)
+        data->arr[i] = i;
+
     assert(RAND_MAX >= 0x7fffffff);
     for (long i=0; i < size-1; i++) {
-        long n = (((uint64_t)rand()) | (((uint64_t)rand()) << 31) | ((((uint64_t)rand()) & 1) << 62)) & 0x7fffffffffffffff;
-        long j = i + n / (0x7fffffffffffffff / (size-i)+1);
-        //printf("%ld %ld %ld %lx\n", i, size-1, j, n);
+        long r = (((uint64_t)rand()) | (((uint64_t)rand()) << 31) | ((((uint64_t)rand()) & 1) << 62)) & 0x7fffffffffffffff;
+        long j = i + (r % (size-i));
+        // printf("%ld %ld %ld %lx\n", i, size-1, j, n);
         long el = data->arr[i];
-        data->arr[i] = j;
-        data->arr[j] = i;
+        data->arr[i] = data->arr[j];
+        data->arr[j] = el;
     }
+
+    // for (long i=0; i < size; i++)
+    //     printf("%ld\n", data->arr[i]);
 
     return it;
 }
@@ -112,13 +120,13 @@ int free_random_iterator(void* it) {
 }
 
 long advance_random_iterator(void* it) {
-    struct seq_iterator* data = (struct seq_iterator*)it;
+    struct random_iterator* data = (struct random_iterator*)it;
+    long val = data->arr[data->i];
 
-    unsigned int i = data->i;
     if (data->i < data->n)
         data->i++;
 
-    return i;
+    return val;
 }
 
 const struct iterator_ctl random_iterator_ctl = {
@@ -149,8 +157,12 @@ long get_file_size(int fd) {
 // Copyright 2018 SUSE Linux.
 // Author: Coly Li <colyli@suse.de>
 uint64_t crc64_hash(uint64_t hash, uint8_t* data, uint64_t len) {
-    while(len--)
+    // printf("\n");
+    while(len--) {
+        // printf("%x ", *data);
         hash = (hash << 8) ^ crc64table[(hash >> 56) ^ *data++];
+    }
+    // printf("\n");
     return hash;
 }
 
@@ -186,6 +198,7 @@ int test_with_read(struct test_params* params) {
     }
 
     while (remaining_size > 0) {
+        // printf("%ld\n", i*block_size);
         result = lseek(params->fd, i*block_size, SEEK_SET);
         if (result < 0) {
             perror("failed to seek");
@@ -242,9 +255,9 @@ int test_with_mmap(struct test_params* params) {
     }
 
     while (remaining_size > 0) {
-        long to_read = remaining_size > block_size ? block_size : remaining_size;
+        long to_read = i+1 == params->blocks ? params->file_size%block_size : block_size;
 
-        params->hash = crc64_hash(params->hash, data + params->bytes_read, to_read);
+        params->hash = crc64_hash(params->hash, data + i*block_size, to_read);
 
         params->bytes_read += to_read;
         long ni = params->it_ctl->advance(params->it);
@@ -265,7 +278,7 @@ end:
     return result;
 }
 
-int init_srand() {
+int read_seed(uint64_t* seed) {
     uint64_t val;
     int result = 0;
     int fd = open("/dev/urandom", O_RDONLY);
@@ -278,7 +291,7 @@ int init_srand() {
         perror("failed to read srand val");
         result = -1;
     } else {
-        srand(val);
+        *seed = val;
     }
 
     assert(close(fd) == 0);
@@ -289,6 +302,7 @@ int main(int argc, char** argv) {
     int result, err;
     int fd;
     long block_size;
+    uint64_t seed;
     unsigned int syscall, order;
 
     if (argc != 5) {
@@ -298,10 +312,11 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    if (init_srand() != 0) {
+    if (read_seed(&seed) != 0) {
         fprintf(stderr, "failed to init srand\n");
         return -1;
     }
+    seed = 7;
 
     fd = open(argv[1], O_RDONLY);
     if (fd < 0) {
