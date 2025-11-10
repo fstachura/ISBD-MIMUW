@@ -3,7 +3,7 @@ use std::io::{Read, stdin};
 
 const U64_MAX_BYTES: u32 = 10;
 
-pub fn encode_vle(mut val: u64) -> Vec<u8> {
+pub fn encode_vle(val: u64) -> Vec<u8> {
     let mut result = Vec::new();
     let mut found_nonzero = false;
 
@@ -50,11 +50,11 @@ pub fn decode_vle(bytes: &mut impl Read) -> Result<Option<u64>, std::io::Error> 
     Ok(ok.then_some(result))
 }
 
-pub fn decode_vle_vec(bytes: &Vec<u8>) -> Option<u64> {
-    decode_vle(&mut bytes.as_slice()).unwrap()
+pub fn decode_vle_vec(mut bytes: &[u8]) -> Option<u64> {
+    decode_vle(&mut bytes).unwrap()
 }
 
-pub fn encode_i64_vle(mut val: i64) -> Vec<u8> {
+pub fn encode_i64_vle(val: i64) -> Vec<u8> {
     encode_vle(u64::from_ne_bytes(val.to_ne_bytes()))
 }
 
@@ -78,7 +78,7 @@ pub fn read_numbers(len: usize) -> Result<Vec<i64>, Box<dyn Error>> {
     Ok(nums)
 }
 
-pub fn read_strings(len: usize) -> Result<Vec<String>, Box<dyn Error>> {
+pub fn read_strings(len: usize) -> std::io::Result<Vec<String>> {
     let mut strs = Vec::with_capacity(len as usize);
 
     for _ in 0..len {
