@@ -63,7 +63,7 @@ pub fn decode_i64_vle(bytes: &mut impl Read) -> Result<Option<i64>, std::io::Err
 }
 
 pub fn read_numbers(len: usize) -> Result<Vec<i64>, Box<dyn Error>> {
-    let mut nums = Vec::with_capacity(len as usize);
+    let mut nums = Vec::with_capacity(len);
 
     for _ in 0..len {
         let mut num_str = String::new();
@@ -79,7 +79,7 @@ pub fn read_numbers(len: usize) -> Result<Vec<i64>, Box<dyn Error>> {
 }
 
 pub fn read_strings(len: usize) -> std::io::Result<Vec<String>> {
-    let mut strs = Vec::with_capacity(len as usize);
+    let mut strs = Vec::with_capacity(len);
 
     for _ in 0..len {
         let mut line = String::new();
