@@ -198,24 +198,26 @@ int test_with_read(struct test_params* params) {
     }
 
     while (remaining_size > 0) {
-        // printf("%ld\n", i*block_size);
-        result = lseek(params->fd, i*block_size, SEEK_SET);
-        if (result < 0) {
+        off_t lseek_result = lseek(params->fd, i*block_size, SEEK_SET);
+        if (lseek_result == -1) {
             perror("failed to seek");
             goto end;
         }
 
-        long to_read = remaining_size > block_size ? block_size : remaining_size;
-        long read_result = read(params->fd, block, to_read);
-        if (read_result <= 0) {
-            printf("%ld %ld\n", i, i*block_size);
-            perror("failed to read");
-            result = -1;
-            goto end;
-        }
+        long to_read = i == (params->blocks-1) ? params->file_size%block_size : block_size;
+        if (to_read != 0) {
+            long read_result = read(params->fd, block, to_read);
+            if (read_result <= 0) {
+                // printf("%ld %ld\n", i, i*block_size);
+                perror("failed to read");
+                result = -1;
+                goto end;
+            }
 
-        params->hash = crc64_hash(params->hash, block, read_result);
-        params->bytes_read += read_result;
+            params->hash = crc64_hash(params->hash, block, read_result);
+            params->bytes_read += read_result;
+            remaining_size -= read_result;
+        }
 
         long ni = params->it_ctl->advance(params->it);
         if (ni == i) {
@@ -223,7 +225,6 @@ int test_with_read(struct test_params* params) {
         }
 
         i = ni;
-        remaining_size -= read_result;
     }
 
 end:
@@ -255,9 +256,13 @@ int test_with_mmap(struct test_params* params) {
     }
 
     while (remaining_size > 0) {
-        long to_read = i+1 == params->blocks ? params->file_size%block_size : block_size;
+        long to_read = i == (params->blocks-1) ? params->file_size%block_size : block_size;
+        // printf("pos %ld, to_read %ld, remaining %ld/%ld\n", i*block_size, to_read, remaining_size, params->file_size);
 
-        params->hash = crc64_hash(params->hash, data + i*block_size, to_read);
+        assert((i*block_size + to_read) <= params->file_size);
+
+        if (to_read != 0)
+            params->hash = crc64_hash(params->hash, data + i*block_size, to_read);
 
         params->bytes_read += to_read;
         long ni = params->it_ctl->advance(params->it);
@@ -348,7 +353,7 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    long blocks = (file_size / block_size) + (file_size%block_size != 0 ? 1 : 0);
+    long blocks = (file_size / block_size) + 1;
     iterator it = it_ctl->init(blocks);
     if (it == NULL) {
         fprintf(stderr, "failed to init iterator\n");
