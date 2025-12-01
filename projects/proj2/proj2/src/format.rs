@@ -187,8 +187,9 @@ pub fn create_str_chunk(strs: &[String]) -> std::io::Result<Vec<u8>> {
     // TODO: multithreaded compression? only makes sense for really large chunks
 
     for s in strs {
-        encoder.write_all(&(s.len() as u32).to_be_bytes())?;
-        encoder.write_all(s.as_bytes())?;
+        let bytes = s.as_bytes();
+        encoder.write_all(&(bytes.len() as u32).to_be_bytes())?;
+        encoder.write_all(bytes)?;
     }
 
     let mut result = encoder.finish()?;
