@@ -58,13 +58,6 @@ pub struct Column {
     pub r_type: models::LogicalColumnType,
 }
 
-impl Column {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(name: String, r_type: models::LogicalColumnType) -> Column {
-        Column { name, r_type }
-    }
-}
-
 /// Description of the COPY query from CSV file. Server will read the file and insert all data into selected table.
 /// When number of columns in source and target doesn't match, user have to use \"destinationColumns\" property to specify which columns data should be inserted into.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
@@ -88,31 +81,12 @@ pub struct CopyQuery {
     pub does_csv_contain_header: Option<bool>,
 }
 
-impl CopyQuery {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(source_filepath: String, destination_table_name: String) -> CopyQuery {
-        CopyQuery {
-            source_filepath,
-            destination_table_name,
-            destination_columns: None,
-            does_csv_contain_header: Some(false),
-        }
-    }
-}
-
 /// Generic error object
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
 #[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
 pub struct Error {
     #[serde(rename = "message")]
     pub message: String,
-}
-
-impl Error {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(message: String) -> Error {
-        Error { message }
-    }
 }
 
 /// Used to submit a new query for execution
@@ -122,13 +96,6 @@ pub struct ExecuteQueryRequest {
     #[serde(rename = "queryDefinition")]
     #[validate(nested)]
     pub query_definition: models::QueryQueryDefinition,
-}
-
-impl ExecuteQueryRequest {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(query_definition: models::QueryQueryDefinition) -> ExecuteQueryRequest {
-        ExecuteQueryRequest { query_definition }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
@@ -143,16 +110,6 @@ pub struct GetQueryResultRequest {
     #[serde(rename = "flushResult")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flush_result: Option<bool>,
-}
-
-impl GetQueryResultRequest {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new() -> GetQueryResultRequest {
-        GetQueryResultRequest {
-            row_limit: None,
-            flush_result: None,
-        }
-    }
 }
 
 /// Enum describing logical column types
@@ -187,13 +144,6 @@ pub struct MultipleProblemsError {
     pub problems: Vec<models::MultipleProblemsErrorProblemsInner>,
 }
 
-impl MultipleProblemsError {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(problems: Vec<models::MultipleProblemsErrorProblemsInner>) -> MultipleProblemsError {
-        MultipleProblemsError { problems }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
 #[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
 pub struct MultipleProblemsErrorProblemsInner {
@@ -205,16 +155,6 @@ pub struct MultipleProblemsErrorProblemsInner {
     #[serde(rename = "context")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
-}
-
-impl MultipleProblemsErrorProblemsInner {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(error: String) -> MultipleProblemsErrorProblemsInner {
-        MultipleProblemsErrorProblemsInner {
-            error,
-            context: None,
-        }
-    }
 }
 
 /// Description of a query in the system
@@ -238,18 +178,6 @@ pub struct Query {
     #[validate(nested)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query_definition: Option<models::QueryQueryDefinition>,
-}
-
-impl Query {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(query_id: String, status: models::QueryStatus) -> Query {
-        Query {
-            query_id,
-            status,
-            is_result_available: None,
-            query_definition: None,
-        }
-    }
 }
 
 /// ID of selected Query (I propose UUID, but it is under your own discretion)
@@ -342,16 +270,6 @@ pub struct QueryResultInner {
     pub columns: Option<Vec<models::QueryResultInnerColumnsInner>>,
 }
 
-impl QueryResultInner {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new() -> QueryResultInner {
-        QueryResultInner {
-            row_count: None,
-            columns: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 #[allow(non_camel_case_types, clippy::large_enum_variant)]
@@ -429,13 +347,6 @@ pub struct SelectQuery {
     pub table_name: Option<String>,
 }
 
-impl SelectQuery {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new() -> SelectQuery {
-        SelectQuery { table_name: None }
-    }
-}
-
 /// Description of a shallow representation of a query
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
 #[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
@@ -449,13 +360,6 @@ pub struct ShallowQuery {
     pub status: models::QueryStatus,
 }
 
-impl ShallowQuery {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(query_id: String, status: models::QueryStatus) -> ShallowQuery {
-        ShallowQuery { query_id, status }
-    }
-}
-
 /// Description of a shallow representation of a table (e.g. without detailed column information)
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
 #[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
@@ -467,16 +371,6 @@ pub struct ShallowTable {
 
     #[serde(rename = "name")]
     pub name: String,
-}
-
-impl ShallowTable {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(name: String) -> ShallowTable {
-        ShallowTable {
-            table_id: None,
-            name,
-        }
-    }
 }
 
 /// Basic information about the system
@@ -499,19 +393,7 @@ pub struct SystemInformation {
 
     /// System uptime in seconds
     #[serde(rename = "uptime")]
-    pub uptime: i64,
-}
-
-impl SystemInformation {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(version: String, uptime: i64) -> SystemInformation {
-        SystemInformation {
-            interface_version: None,
-            version,
-            author: None,
-            uptime,
-        }
-    }
+    pub uptime: u64,
 }
 
 /// ID of selected Table (I propose UUID, but it is under your own discretion)
@@ -560,11 +442,4 @@ pub struct TableSchema {
     #[serde(rename = "columns")]
     #[validate(nested)]
     pub columns: Vec<models::Column>,
-}
-
-impl TableSchema {
-    #[allow(clippy::new_without_default, clippy::too_many_arguments)]
-    pub fn new(name: String, columns: Vec<models::Column>) -> TableSchema {
-        TableSchema { name, columns }
-    }
 }
