@@ -1,5 +1,7 @@
 #![allow(unused_qualifications)]
 
+use std::sync::Arc;
+
 use validator::Validate;
 
 use crate::{models};
@@ -104,7 +106,7 @@ pub struct GetQueryResultRequest {
     /// Maximum number of rows to return
     #[serde(rename = "rowLimit")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub row_limit: Option<i32>,
+    pub row_limit: Option<usize>,
 
     /// Say to system that result will not be accessed by the user anymore (it is safe to release the resources connected with the result)
     #[serde(rename = "flushResult")]
@@ -261,7 +263,7 @@ pub struct QueryResultInner {
     /// Number of rows in result
     #[serde(rename = "rowCount")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub row_count: Option<i32>,
+    pub row_count: Option<usize>,
 
     /// Array of columns in result (all should have the same length equal to rowCount)
     #[serde(rename = "columns")]
@@ -270,12 +272,13 @@ pub struct QueryResultInner {
     pub columns: Option<Vec<models::QueryResultInnerColumnsInner>>,
 }
 
+// TODO: rc feature - is this what i want?
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 #[allow(non_camel_case_types, clippy::large_enum_variant)]
 pub enum QueryResultInnerColumnsInner {
-    VecOfi64(Vec<i64>),
-    VecOfString(Vec<String>),
+    VecOfi64(Arc<Vec<i64>>),
+    VecOfString(Arc<Vec<String>>),
 }
 
 impl validator::Validate for QueryResultInnerColumnsInner {
@@ -295,17 +298,6 @@ impl std::str::FromStr for QueryResultInnerColumnsInner {
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         serde_json::from_str(s)
-    }
-}
-
-impl From<Vec<i64>> for QueryResultInnerColumnsInner {
-    fn from(value: Vec<i64>) -> Self {
-        Self::VecOfi64(value)
-    }
-}
-impl From<Vec<String>> for QueryResultInnerColumnsInner {
-    fn from(value: Vec<String>) -> Self {
-        Self::VecOfString(value)
     }
 }
 
@@ -394,42 +386,6 @@ pub struct SystemInformation {
     /// System uptime in seconds
     #[serde(rename = "uptime")]
     pub uptime: u64,
-}
-
-/// ID of selected Table (I propose UUID, but it is under your own discretion)
-#[derive(Debug, Clone, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
-pub struct TableId(pub String);
-
-impl validator::Validate for TableId {
-    fn validate(&self) -> std::result::Result<(), validator::ValidationErrors> {
-        std::result::Result::Ok(())
-    }
-}
-
-impl std::convert::From<String> for TableId {
-    fn from(x: String) -> Self {
-        TableId(x)
-    }
-}
-
-impl std::convert::From<TableId> for String {
-    fn from(x: TableId) -> Self {
-        x.0
-    }
-}
-
-impl std::ops::Deref for TableId {
-    type Target = String;
-    fn deref(&self) -> &String {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for TableId {
-    fn deref_mut(&mut self) -> &mut String {
-        &mut self.0
-    }
 }
 
 /// Description of the table in the database
