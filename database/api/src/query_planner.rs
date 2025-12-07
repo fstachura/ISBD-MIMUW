@@ -49,8 +49,12 @@ pub enum QueryPlan {
 #[derive(Clone, Debug)]
 pub enum QueryPlanError {
     UnknownColumns(Vec<String>),
+    DuplicatedColumns(Vec<String>),
     UnknownTable(String),
-    NotEnoughColumnsInColumnOrder(usize, usize),
+    WrongNumberOfColumnsInOrder {
+        expected: usize,
+        got: usize
+    },
 }
 
 pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<QueryPlan, QueryPlanError> {
@@ -72,18 +76,26 @@ pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<
             let schema = table_manager.read_schema().await
                 .ok_or(QueryPlanError::UnknownTable(target))?;
 
-            let mut column_order = Vec::new();
+            let mut column_order: Vec<String> = Vec::new();
             let mut unknown_columns = Vec::new();
+            let mut duplicated_columns = Vec::new();
             if let Some(columns) = columns {
                 if schema.table.columns().len() != columns.len() {
-                    return Err(QueryPlanError::NotEnoughColumnsInColumnOrder(schema.table.columns().len(), columns.len()));
+                    return Err(QueryPlanError::WrongNumberOfColumnsInOrder {
+                        expected: columns.len(),
+                        got: schema.table.columns().len(),
+                    })
                 }
 
                 for col in columns {
                     if let None = schema.table.columns().iter().find(|c| c.name == col) {
                         unknown_columns.push(col);
                     } else {
-                        column_order.push(col);
+                        if let None = column_order.iter().find(|c| **c == col) {
+                            column_order.push(col);
+                        } else {
+                            duplicated_columns.push(col);
+                        }
                     }
                 }
             } else {
@@ -92,6 +104,10 @@ pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<
 
             if !unknown_columns.is_empty() {
                 return Err(QueryPlanError::UnknownColumns(unknown_columns));
+            }
+
+            if !duplicated_columns.is_empty() {
+                return Err(QueryPlanError::DuplicatedColumns(duplicated_columns));
             }
 
             Ok(QueryPlan::Copy {
