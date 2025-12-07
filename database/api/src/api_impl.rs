@@ -73,7 +73,7 @@ fn manager_query_to_model(query: &query_manager::Query) -> models::QueryQueryDef
             }),
         query_manager::Query::Select { table } =>
             models::QueryQueryDefinition::SelectQuery(models::SelectQuery {
-                table_name: Some(table.clone()),
+                table_name: table.clone(),
             }),
     }
 }
@@ -154,20 +154,13 @@ fn query_result_to_response(result: &query_manager::QueryResult, row_limit: Opti
     vec![result]
 }
 
-fn model_query_to_manager_query(query: models::QueryQueryDefinition)
-    -> Result<query_manager::Query, models::MultipleProblemsError> {
-
+fn model_query_to_manager_query(
+    query: models::QueryQueryDefinition
+) -> Result<query_manager::Query, models::MultipleProblemsError> {
     Ok(match query {
         models::QueryQueryDefinition::SelectQuery(s) =>
             query_manager::Query::Select {
-                table: s.table_name.ok_or(models::MultipleProblemsError {
-                    problems: vec![
-                        models::MultipleProblemsErrorProblemsInner {
-                            error: "table name not provided".to_string(),
-                            context: None,
-                        }
-                    ],
-                })?
+                table: s.table_name,
             },
         models::QueryQueryDefinition::CopyQuery(s) =>
             query_manager::Query::Copy {

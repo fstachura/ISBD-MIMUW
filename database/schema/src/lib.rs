@@ -23,7 +23,7 @@ fn validate_name(name: &str) -> bool {
 }
 
 fn generate_column_filename(table_name: &str, column_name: &str, num: u64) -> String {
-    String::from(table_name) + ":" + column_name + ":" + &num.to_string()
+   String::from(table_name) + ":" + column_name + ":" + &num.to_string()
 }
 
 fn get_column_path(data_path: &Path, column_filename: &str) -> PathBuf {
@@ -95,14 +95,36 @@ impl Table {
         &self.name
     }
 
-    pub fn add_file(&mut self) {
-        for col in self.columns.iter_mut() {
-            col.files.push(generate_column_filename(
+    pub fn new_filenames(&self) -> Vec<(String, ColumnType, String)> {
+        self.columns.iter().map(|col| (
+            col.name.clone(),
+            col.column_type,
+            generate_column_filename(
                 &self.name,
                 &col.name,
                 col.files.len().try_into().unwrap(),
-            ));
+            ),
+        )).collect()
+    }
+
+    pub fn add_filenames(&mut self, filenames: Vec<(String, ColumnType, String)>) -> Result<(), ()> {
+        // TODO maybe could be enforced by the typesystem
+        if filenames.len() != self.columns.len() {
+            return Err(())
         }
+
+        for (col, (name, typ, filename)) in self.columns.iter().zip(filenames.iter()) {
+            if col.name != *name && col.column_type != *typ {
+                return Err(())
+            }
+        }
+
+        for (col, (name, typ, filename)) in self.columns.iter_mut().zip(filenames) {
+            assert!(col.name == name && col.column_type == typ);
+            col.files.push(filename);
+        }
+
+        Ok(())
     }
 }
 

@@ -20,6 +20,55 @@ pub struct TableManager {
 pub struct TableLockedForCopy {
     copy_token: OwnedMutexGuard<()>,
     read_token: OwnedRwLockReadGuard<LockedTable>,
+    table: Arc<RwLock<LockedTable>>,
+    copy_targets: Vec<(String, ColumnType, String)>,
+    schema_path: PathBuf,
+}
+
+#[derive(Debug)]
+pub enum FinishWriteError {
+    TableDeleted,
+    InvalidFilenames,
+    IoError(String, std::io::Error),
+}
+
+impl TableLockedForCopy {
+    pub fn table(&self) -> Option<(&Table, &PathBuf)> {
+        if self.read_token.deleted {
+            None    
+        } else {
+            Some((&self.read_token.table, &self.read_token.data_dir))
+        }
+    }
+
+    pub fn copy_targets(&self) -> &Vec<(String, ColumnType, String)> {
+        &self.copy_targets
+    }
+
+    pub async fn finish_write(self) -> Result<(), FinishWriteError> {
+        drop(self.read_token);
+        let mut write_lock = self.table.write().await;
+        if !write_lock.deleted {
+            if let Ok(()) = write_lock.table.add_filenames(self.copy_targets) {
+                let mut file = File::options()
+                    .write(true)
+                    .truncate(false)
+                    .create(false)
+                    .open(self.schema_path)
+                    .await
+                    .map_err(|e| FinishWriteError::IoError("failed to open table file".into(), e))?;
+
+                flush_table(&mut file, &write_lock.table)
+                    .await
+                    .map_err(|e| FinishWriteError::IoError("failed to write table file".into(), e))?;
+                Ok(())
+            } else {
+                Err(FinishWriteError::InvalidFilenames)
+            }
+        } else {
+            Err(FinishWriteError::TableDeleted)
+        }
+    }
 }
 
 pub struct TableLockedForSelect {
@@ -57,9 +106,14 @@ impl TableManager {
 
     pub async fn lock_copy(&self) -> TableLockedForCopy {
         let copy_token = self.copy_mutex.clone().lock_owned().await;
+        let read_token = self.table.clone().read_owned().await;
+        let copy_targets = read_token.table.new_filenames();
         TableLockedForCopy {
             copy_token, 
-            read_token: self.table.clone().read_owned().await,
+            read_token,
+            table: self.table.clone(),
+            schema_path: self.schema_path.clone(),
+            copy_targets,
         }
     }
 

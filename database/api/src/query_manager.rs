@@ -28,7 +28,7 @@ pub enum QueryResult {
     Select(Arc<Vec<Column>>)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum QueryError {
     TableDeleted,
     UnknownColumns(Vec<String>),

@@ -1,24 +1,31 @@
+use std::collections;
+use std::num::ParseIntError;
+use std::string::ParseError;
 use std::sync::{Arc};
 use std::path::PathBuf;
 use std::thread::spawn;
 use std::iter::Enumerate;
 
 use chrono::format::parse_and_remainder;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWriteExt};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::{MutexGuard, RwLock, RwLockReadGuard, mpsc};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio::{fs::File};
 use uuid::Uuid;
+use itertools::Itertools;
 
 use crate::query_manager::{self, Query, QueryError, QueryManager, QueryStateMarker};
 use crate::schema_manager::{LockedTable, SchemaManager, TableLockedForCopy, TableManager};
 use schema::{Column, ColumnType};
 use crate::query_planner::{QueryPlan, plan_query};
-use format::format::{CHUNK_HEADER_SIZE, ChunkHeader, DeserializerError, HEADER_SIZE, parse_chunk_header, parse_header, parse_int64_chunk, parse_str_chunk};
+use format::format::{CHUNK_HEADER_SIZE, ChunkHeader, DeserializerError, HEADER_SIZE, create_header, create_int64_chunk, create_str_chunk, parse_chunk_header, parse_header, parse_int64_chunk, parse_str_chunk};
+
+const COPY_BATCH_SIZE: usize = 8192;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum ReadError {
     DeserializerError(String, DeserializerError),
     IoError(String, std::io::Error),
@@ -29,7 +36,7 @@ enum ReadResult {
     Str(Vec<Vec<String>>),
 }
 
-pub async fn read_chunk_header(file: &mut File) -> Result<(u64, Vec<u8>), ReadError> {
+async fn read_chunk_header(file: &mut File) -> Result<(u64, Vec<u8>), ReadError> {
     let mut chunk_buf: [u8; CHUNK_HEADER_SIZE] = [0; CHUNK_HEADER_SIZE];
 
     file.read_exact(&mut chunk_buf).await
@@ -44,7 +51,7 @@ pub async fn read_chunk_header(file: &mut File) -> Result<(u64, Vec<u8>), ReadEr
     Ok((chunk_header.rows, chunk_bytes))
 }
 
-pub async fn read_file(mut file: File) -> Result<ReadResult, ReadError> {
+async fn read_file(mut file: File) -> Result<ReadResult, ReadError> {
     let mut buf: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
     file.read_exact(&mut buf).await
         .map_err(|e| ReadError::IoError("failed to read header".into(), e))?;
@@ -91,10 +98,16 @@ pub async fn read_file(mut file: File) -> Result<ReadResult, ReadError> {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum ExecuteError {
     IoError(String, std::io::Error),
+    CsvError(csv::Error),
+    WrongRecordSize(usize, usize),
+    UnknownColumn(String),
     ReadError(ReadError),
     UnknownError(String),
+    ParseIntError(ParseIntError),
+    TableDeleted,
 }
 
 enum SelectResult {
@@ -104,18 +117,236 @@ enum SelectResult {
     Empty,
 }
 
-pub async fn execute_copy() -> Result<(), ExecuteError> {
-    // * lock mutex
-    //     * rlock table - delete will need to get write first
-    //         * generate filenames
-    //         * write files
-    //         * upgrade lock to write - it may now turn out that the table got deleted
-    //             * push data to table, delete files is table got deleted
 
-    Ok(())
+// in blocked context
+async fn execute_copy(
+    table_lock: TableLockedForCopy,
+    source: PathBuf,
+    has_header: bool,
+    column_order: Vec<String>
+) -> Result<(), ExecuteError> {
+    // generate filenames
+    // write files
+    // drop read
+    //      WHAT IF SOMEONE ACQUIRES WRITE HERE - no copy mutex = no write on directory. can write
+    //      to schema but it's enforced in manager that only delete can happen in this case. if
+    //      table gets deleted, we abort write finsh
+    // write lock - it may now turn out that the table got deleted
+    // push data to table, delete files is table got deleted
+
+    let (table, data_dir) = if let Some(v) = table_lock.table() {
+        v
+    } else {
+        return Err(ExecuteError::TableDeleted)
+    };
+
+    let targets = table_lock.copy_targets().clone();
+
+    let final_column_order = {
+        let mut final_column_order = vec![];
+        for o in column_order {
+            let mut found = false;
+            for (name, typ, filename) in targets.clone() {
+                if *name == o {
+                    let path = data_dir.join(filename);
+                    final_column_order.push((name.clone(), typ, path));
+                    found = true;
+                    break;
+                }
+            }
+
+            if !found {
+                return Err(ExecuteError::UnknownColumn(o));
+            }
+        }
+
+        final_column_order
+    };
+
+    println!("final column order {:?}", final_column_order);
+
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(has_header)
+        .from_path(source)
+        .map_err(ExecuteError::CsvError)?;
+
+    let mut writing_routines = JoinSet::new();
+
+    let mut column_channels = {
+        let mut column_channels = vec![];
+
+        for (name, typ, path) in final_column_order {
+            println!("opened {path:?}");
+
+            let mut file = File::options()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(path.clone())
+                .await
+                .map_err(|err| ExecuteError::IoError(
+                    format!("failed to open column path {:?} for writing", path),
+                    err
+                ))?; // may quit, send handles will be dropped, so routines will exit
+
+            let mut header_buf = vec![];
+            let format_type = match typ {
+                ColumnType::INT64 => format::format::ColumnType::Int64,
+                ColumnType::VARCHAR => format::format::ColumnType::Str,
+            };
+            create_header(
+                &mut header_buf,
+                format_type,
+                0
+            ).map_err(|e| ExecuteError::IoError("failed to create header".to_string(), e))?;
+            file.write_all(&header_buf).await
+                .map_err(|e| ExecuteError::IoError("failed to write header".to_string(), e))?;
+
+            let (tx, mut rx) = mpsc::channel::<Vec<String>>(16);
+
+            let handle = writing_routines.spawn(async move {
+                let mut result = Ok(());
+                let mut chunks = 0;
+
+                while let Some(chunk) = rx.recv().await {
+                    chunks += 1;
+                    result = match typ {
+                        ColumnType::INT64 => {
+                            let nums: Result<Vec<i64>, _> = chunk.iter().map(|v| v.parse::<i64>()).collect();
+                            if let Ok(nums) = nums {
+                                let bytes = create_int64_chunk(&nums);
+                                file.write(&bytes).await
+                                    .map_err(|e| ExecuteError::IoError("failed to write ints".to_string(), e))
+                                    .map(|_| ())
+                            } else {
+                                nums
+                                    .map_err(|e| ExecuteError::ParseIntError(e))
+                                    .map(|_| ())
+                            }
+                        },
+                        ColumnType::VARCHAR => {
+                            let bytes = create_str_chunk(&chunk);
+                            if let Ok(bytes) = bytes {
+                                file.write(&bytes).await
+                                    .map_err(|e| ExecuteError::IoError("failed to write strs".to_string(), e))
+                                    .map(|_| ())
+                            } else {
+                                bytes
+                                    .map_err(|e| ExecuteError::IoError("failed to create str chunk".to_string(), e))
+                                    .map(|_| ())
+                            }
+                        },
+                    };
+
+                    if result.is_err() {
+                        println!("failed to write chunk {:?}", result);
+                        break; // quits, next queue send will fail because rx was dropped
+                    }
+                }
+
+                if result.is_ok() {
+                    file.seek(std::io::SeekFrom::Start(0)).await
+                        .map_err(|e| ExecuteError::IoError("failed to seek".to_string(), e))?;
+                    let mut header_buf = vec![];
+                    create_header(
+                        &mut header_buf,
+                        format_type,
+                        chunks
+                    ).map_err(|e| ExecuteError::IoError("failed to create header".to_string(), e))?;
+                    file.write_all(&header_buf).await
+                        .map_err(|e| ExecuteError::IoError("failed to write header".to_string(), e))?;
+                    Ok(())
+                } else {
+                    println!("error {result:?}");
+                    result
+                }
+            });
+
+            column_channels.push((tx, handle));
+        }
+
+        column_channels
+    };
+
+    println!("spawned routines");
+
+    let mut result = Ok(());
+    let mut chunks = vec![Vec::with_capacity(COPY_BATCH_SIZE); column_channels.len()];
+    let mut chunk_len = 0;
+
+    for record in reader.records() {
+        match record {
+            Ok(v) => {
+                if v.len() < column_channels.len() {
+                    result = Err(ExecuteError::WrongRecordSize(v.len(), column_channels.len()));
+                    break
+                }
+
+                for (record, chunk) in v.iter().zip(chunks.iter_mut()) {
+                    chunk.push(record.to_string());
+                }
+
+                if chunk_len >= CHUNK_HEADER_SIZE {
+                    for (chunk, (tx, handle)) in chunks.drain(..).zip(column_channels.iter()) {
+                        if let Err(err) = tx.send(chunk).await {
+                            println!("send error {:?}", err);
+                            result = Err(ExecuteError::UnknownError(format!("{:?}", err)));
+                            break;
+                        }
+                    }
+
+                    chunk_len = 0;
+                    chunks = vec![Vec::with_capacity(COPY_BATCH_SIZE); column_channels.len()];
+                } else {
+                    chunk_len += 1;
+                }
+            },
+            Err(err) => {
+                result = Err(ExecuteError::CsvError(err));
+                break
+            },
+        }
+    }
+
+
+    if result.is_err() {
+        writing_routines.abort_all();
+    } else if chunk_len >= 0 {
+        for (chunk, (tx, handle)) in chunks.drain(..).zip(column_channels.iter()) {
+            if let Err(err) = tx.send(chunk).await {
+                println!("send error {:?}", err);
+                result = Err(ExecuteError::UnknownError(format!("{:?}", err)));
+                break;
+            }
+        }
+    }
+
+    for (tx, handle) in column_channels.drain(..) {
+        drop(tx)
+    }
+
+    while let Some(join_result) = writing_routines.join_next().await {
+        if let Err(err) = join_result {
+            if err.is_panic() {
+                println!("coroutine panicked {err:?}");
+                result = Err(ExecuteError::UnknownError(format!("writing coroutine panicked {err:?}")));
+            }
+        }
+    }
+
+    if result.is_ok() {
+        if let Err(err) = table_lock.finish_write().await {
+            println!("failed to finish write {err:?}");
+            Err(ExecuteError::UnknownError(format!("{err:?}")))
+        } else {
+            Ok(())
+        }
+    } else {
+        result
+    }
 }
 
-pub async fn execute_select(data_dir: &PathBuf, columns: &Vec<Column>) -> Result<Vec<SelectResult>, ExecuteError> {
+async fn execute_select(data_dir: &PathBuf, columns: &Vec<Column>) -> Result<Vec<SelectResult>, ExecuteError> {
     // read lock schema, get all files, for each file spawn a routine that reads the file, collect
     // data from routines into a vector
 
@@ -231,6 +462,26 @@ pub async fn executor_loop(
 
         match plan {
             QueryPlan::Copy { source, column_order, contains_header, table } => {
+                println!("copy query");
+                let state_marker_clone = state_marker.clone();
+                let spawn_result = tokio::spawn(async move {
+                    println!("in copy spawn");
+                    let locked_table = table.lock_copy().await;
+                    println!("locked table");
+                    match execute_copy(locked_table, source, contains_header, column_order).await {
+                        Ok(()) => {
+                            *state_marker.write().await = QueryStateMarker::Completed(
+                                query_manager::QueryResult::Copy
+                            );
+                        },
+                        Err(err) => {
+                            println!("copy error {:?}", err);
+                            *state_marker.write().await = QueryStateMarker::Failed(
+                                QueryError::ExecuteError
+                            );
+                        },
+                    }
+                });
             },
             QueryPlan::Select { columns, table } => {
                 tokio::spawn(async move {
@@ -285,6 +536,7 @@ pub async fn planner_loop(
                 }
             },
             Err(err) => {
+                println!("failed to plan query {:?}", err);
                 *state_marker.write().await = QueryStateMarker::Failed(err);
             },
         }

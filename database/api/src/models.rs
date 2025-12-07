@@ -66,7 +66,8 @@ pub struct CopyQuery {
     pub destination_table_name: String,
 
     /// List of columns to copy data into. It creates a map from source columns to destination columns. Assumes that data in source file is in the same order as in this list.
-    #[serde(rename = "destinationColumns")]
+    /// TODO (d)estinationColumns
+    #[serde(rename = "ddestinationColumns")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destination_columns: Option<Vec<String>>,
 
@@ -307,8 +308,7 @@ impl validator::Validate for QueryStatus {
 #[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
 pub struct SelectQuery {
     #[serde(rename = "tableName")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub table_name: Option<String>,
+    pub table_name: String,
 }
 
 /// Description of a shallow representation of a query
