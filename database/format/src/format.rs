@@ -134,25 +134,25 @@ pub struct Int64ColumnChunkIterator<'a, T: Read> {
     pub data: &'a mut T,
     pub remaining_items: u64,
     pub leader: i64,
-    pub error: Option<DeserializerError>
+    pub error: bool,
 }
 
 impl<'a, T: Read> Iterator for Int64ColumnChunkIterator<'a, T> {
-    type Item = i64;
+    type Item = Result<i64, DeserializerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining_items != 0 && self.error.is_none() {
+        if self.remaining_items != 0 && !self.error {
             self.remaining_items -= 1;
             match decode_i64_vle(&mut self.data).map(|v| v.map(|v| v + self.leader)) {
-                Ok(Some(n)) => Some(n),
+                Ok(Some(n)) => Some(Ok(n)),
                 Ok(None) => {
-                    self.error = Some(DeserializerError::InvalidInt64);
-                    None
-                }
+                    self.error = true;
+                    Some(Err(DeserializerError::InvalidInt64))
+                },
                 Err(err) => {
-                    self.error = Some(DeserializerError::IOError(err));
-                    None
-                }
+                    self.error = true;
+                    Some(Err(DeserializerError::IOError(err)))
+                },
             }
         } else {
             None
@@ -169,7 +169,7 @@ pub fn parse_int64_chunk<'a, T: Read>(rows: u64, data: &'a mut T) -> Result<Int6
         data,
         remaining_items: rows,
         leader,
-        error: None,
+        error: false,
     })
 }
 
@@ -203,34 +203,34 @@ pub fn create_str_chunk(strs: &[String]) -> std::io::Result<Vec<u8>> {
 pub struct StringColumnChunkIterator<'a, T> {
     pub decoder: Decoder<'a, T>,
     pub remaining_items: u64,
-    pub error: Option<DeserializerError>
+    pub error: bool,
 }
 
 impl<'a, T: BufRead> Iterator for StringColumnChunkIterator<'a, T> {
-    type Item = String;
+    type Item = Result<String, DeserializerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining_items != 0 && self.error.is_none() {
+        if self.remaining_items != 0 && !self.error {
             let mut len_buf: [u8; 4] = [0; 4];
             if let Err(err) = self.decoder.read(&mut len_buf) {
-                self.error = Some(DeserializerError::IOError(err));
-                return None
+                self.error = true;
+                return Some(Err(DeserializerError::IOError(err)));
             }
 
             let len = u32::from_be_bytes(len_buf);
 
             let mut buf: Vec<u8> = vec![0; len as usize];
             if let Err(err) = self.decoder.read(&mut buf) {
-                self.error = Some(DeserializerError::IOError(err));
-                return None
+                self.error = true;
+                return Some(Err(DeserializerError::IOError(err)));
             }
 
             self.remaining_items -= 1;
             match String::from_utf8(buf) {
-                Ok(s) => Some(s),
+                Ok(s) => Some(Ok(s)),
                 Err(err) => {
-                    self.error = Some(DeserializerError::InvalidString(err));
-                    None
+                    self.error = true;
+                    Some(Err(DeserializerError::InvalidString(err)))
                 }
             }
         } else {
@@ -243,7 +243,7 @@ pub fn parse_str_chunk(rows: u64, data: &mut impl Read) -> Result<StringColumnCh
     Ok(StringColumnChunkIterator {
         decoder: Decoder::new(data).unwrap(),
         remaining_items: rows,
-        error: None,
+        error: false,
     })
 }
 

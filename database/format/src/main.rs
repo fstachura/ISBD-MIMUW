@@ -150,12 +150,15 @@ fn decode_i64_column(file: &mut File, nc: u64) {
         let mut chunk_slice = chunk.as_slice();
         let mut row_it = parse_int64_chunk(chunk_header.rows, &mut chunk_slice).unwrap();
         for n in row_it.by_ref() {
-            // println!("{n}");
-            sum = sum.saturating_add(n);
-            nums += 1;
-        }
-        if let Some(err) = row_it.error {
-            panic!("row iterator ended with error {err:?}");
+            match n {
+                Ok(n) => {
+                    // println!("{n}");
+                    sum = sum.saturating_add(n);
+                    nums += 1;
+                },
+                Err(err) =>
+                    panic!("row iterator ended with error {err:?}"),
+            }
         }
     }
     if let Some(err) = chunk_it.error {
@@ -175,19 +178,20 @@ fn decode_str_column(file: &mut File, nc: u64) {
         let mut chunk_slice = chunk.as_slice();
         let mut row_it = parse_str_chunk(chunk_header.rows, &mut chunk_slice).unwrap();
         for s in row_it.by_ref() {
-            // println!("{s}");
-            for c in s.chars() {
-                if c >= 0 as char && c <= 127 as char {
-                    if !chars.contains_key(&c) {
-                        chars.insert(c, 1);
-                    } else {
-                        chars.insert(c, chars[&c]+1);
+            match s {
+                Ok(s) => for c in s.chars() {
+                    if c >= 0 as char && c <= 127 as char {
+                        if !chars.contains_key(&c) {
+                            chars.insert(c, 1);
+                        } else {
+                            chars.insert(c, chars[&c]+1);
+                        }
                     }
-                }
+                },
+                Err(err) =>
+                    panic!("row iterator ended with error {err:?}"),
             }
-        }
-        if let Some(err) = row_it.error {
-            panic!("row iterator ended with error {err:?}");
+            // println!("{s}");
         }
     }
     if let Some(err) = chunk_it.error {

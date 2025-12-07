@@ -6,8 +6,6 @@ description = "This file describes interface between DBMS system and user."
 edition = "2024"
 
 [features]
-default = ["server"]
-server = []
 conversion = [
     "frunk",
     "frunk_derives",
@@ -37,7 +35,7 @@ regex = "1"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_html_form = "0.2"
 serde_json = { version = "1", features = ["raw_value"] }
-tokio = { version = "1", default-features = false, features = ["signal", "rt-multi-thread", "fs"] }
+tokio = { version = "1", default-features = false, features = ["signal", "rt-multi-thread", "fs", "io-util"] }
 tracing = { version = "0.1", features = ["attributes"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 validator = { version = "0.20", features = ["derive"] }

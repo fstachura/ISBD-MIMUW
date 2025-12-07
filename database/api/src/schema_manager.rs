@@ -1,88 +1,204 @@
-use std::{fs::File, io::{Read, SeekFrom, Seek, Write}, path::PathBuf};
-use schema::{Schema, get_schema_path};
+use tokio::{fs::{File, read_dir, remove_file}, sync::{Mutex, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard}, task::spawn_blocking};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use std::{collections::HashMap, error::Error, io::{self, Read, Seek, SeekFrom, Write}, path::PathBuf, sync::{Arc, atomic::AtomicBool}};
+use schema::{ColumnType, Table, TableError};
 
+#[derive(Debug)]
+pub struct LockedTable {
+    pub table: Table,
+    pub data_dir: PathBuf,
+    deleted: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct TableManager {
+    table: Arc<RwLock<LockedTable>>,
+    schema_path: PathBuf,
+    copy_mutex: Arc<Mutex<()>>,
+}
+
+pub struct TableLockedForCopy {
+    copy_token: OwnedMutexGuard<()>,
+    read_token: OwnedRwLockReadGuard<LockedTable>,
+}
+
+pub struct TableLockedForSelect {
+    read_token: OwnedRwLockReadGuard<LockedTable>,
+}
+
+impl TableLockedForSelect {
+    pub fn table(&self) -> Option<(&Table, &PathBuf)> {
+        if self.read_token.deleted {
+            None    
+        } else {
+            Some((&self.read_token.table, &self.read_token.data_dir))
+        }
+    }
+}
+
+impl TableManager {
+    fn new(schema_path: PathBuf, data_dir: PathBuf, table: Table) -> Self {
+        TableManager { 
+            table: Arc::new(RwLock::new(LockedTable {
+                data_dir,
+                table,
+                deleted: false,
+            })), 
+            schema_path,
+            copy_mutex: Arc::new(Mutex::new(())),
+        }
+    }
+
+    pub async fn lock_select(&self) -> TableLockedForSelect {
+        TableLockedForSelect {
+            read_token: self.table.clone().read_owned().await,
+        }
+    }
+
+    pub async fn lock_copy(&self) -> TableLockedForCopy {
+        let copy_token = self.copy_mutex.clone().lock_owned().await;
+        TableLockedForCopy {
+            copy_token, 
+            read_token: self.table.clone().read_owned().await,
+        }
+    }
+
+    pub async fn read_schema<'a>(&'a self) -> Option<RwLockReadGuard<'a, LockedTable>> {
+        let table = self.table.read().await;
+        if table.deleted {
+            None
+        } else {
+            Some(table)
+        }
+    }
+}
+
+async fn flush_table(file: &mut File, table: &Table) -> std::io::Result<()> {
+    let data: String = table.try_into()?;
+    file.seek(std::io::SeekFrom::Start(0)).await?;
+    file.write(&data.as_bytes()).await?;
+    file.sync_all().await?;
+    Ok(())
+}
+
+#[derive(Clone)]
 pub struct SchemaManager {
     data_dir: PathBuf,
+    schema_dir: PathBuf,
+    schema: Arc<RwLock<HashMap<String, TableManager>>>,
+}
+
+#[derive(Debug)]
+pub enum SchemaError {
+    TableExists(String),
+    UnknownTable(String),
+    TableError(TableError),
+    SerdeError(serde_json::Error),
+    IoError(String, std::io::Error),
 }
 
 impl SchemaManager {
-    pub fn new(data_dir: PathBuf) -> Self {
-        SchemaManager { data_dir }
+    pub async fn new(schema_dir: PathBuf, data_dir: PathBuf) -> Result<Self, std::io::Error> {
+        let mut schema_map = HashMap::new();
+
+        let mut dir = read_dir(schema_dir.clone()).await?;
+        while let Some(entry) = dir.next_entry().await? {
+            let filename = entry.file_name();
+            let filename = filename.to_str()
+                .ok_or(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("failed to convert schema filename {:?}", entry.file_name())
+                ))?;
+
+            if filename.ends_with(".json") {
+                let mut file = File::open(entry.path()).await?;
+                let mut buf = vec![];
+                file.read_to_end(&mut buf).await?;
+                let table: Table = buf.as_slice().try_into()
+                    .map_err(|e: <Table as TryFrom<&[u8]>>::Error| Into::<std::io::Error>::into(e))?;
+
+                schema_map.insert(
+                    table.name().clone(),
+                    TableManager::new(entry.path(), data_dir.clone(), table)
+                );
+            } else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("non-json file found in schema directory {:?}", entry.file_name())
+                ));
+            }
+        }
+
+        Ok(SchemaManager {
+            data_dir,
+            schema_dir,
+            schema: Arc::new(RwLock::new(schema_map)),
+        })
     }
-}
 
-pub struct RoSchema {
-    schema: Schema,
-    // shared file lock - enforced by get_schema
-    #[allow(unused)]
-    file: File,
-}
+    pub async fn create_table(&self, name: String, columns: &[(String, ColumnType)]) ->
+        Result<TableManager, SchemaError> {
 
-impl RoSchema {
-    pub fn get(&self) -> &Schema {
-        &self.schema
+        // NOTE: assuming table checks if name is valid
+        let table = Table::new(name.clone(), columns)
+            .map_err(SchemaError::TableError)?;
+
+        let schema_path = self.schema_dir.join(name.clone() + ".json");
+        let table_json: String = (&table).try_into()
+            .map_err(|v| SchemaError::SerdeError(v))?;
+
+        let manager = TableManager::new(schema_path.clone(), self.data_dir.clone(), table);
+
+        let mut schema = self.schema.write().await;
+
+        if schema.contains_key(&name) {
+            return Err(SchemaError::TableExists(name));
+        }
+
+        let mut file = File::options()
+            .create_new(true) // write on schema - table is not being deleted
+            .truncate(true)
+            .write(true)
+            .open(schema_path)
+            .await
+            .map_err(|e| SchemaError::IoError("failed to create schema file".into(), e))?;
+
+        schema.insert(name.clone(), manager.clone());
+
+        if let Err(err) = file.write_all(table_json.as_bytes()).await {
+            schema.remove(&name);
+            Err(SchemaError::IoError("failed to write schema file".into(), err))
+        } else {
+            Ok(manager)
+        }
     }
-}
 
-pub struct MutSchema {
-    schema: Schema,
-    // exclusive file lock - enforced by get_schema
-    file: File,
-}
+    pub async fn delete_table(&self, name: &str) -> Result<(), SchemaError> {
+        let mut schema = self.schema.write().await;
 
-impl MutSchema {
-    pub fn get(&self) -> &Schema {
-        &self.schema
-    }
+        let mut table_manager = schema.remove(name)
+            .ok_or(SchemaError::UnknownTable(name.to_string()))?;
 
-    pub fn get_mut(&mut self) -> &mut Schema {
-        &mut self.schema
-    }
+        if let Err(err) = remove_file(table_manager.schema_path.clone()).await {
+            schema.insert(name.to_string(), table_manager);
+            return Err(SchemaError::IoError("failed to remove schema file".into(), err))
+        }
 
-    pub fn flush(&mut self) -> std::io::Result<()> {
-        let data: String = (&self.schema).try_into()?;
-        self.file.seek(std::io::SeekFrom::Start(0))?;
-        self.file.write(&data.as_bytes())?;
-        self.file.sync_all()?;
+        let mut table = table_manager.table.write().await;
+        table.deleted = true;
+
+        // TODO spawn task that removes files in the background
+        // TODO what if someone creates a table with same name? write lock on table until delete is
+        // completed 
+
         Ok(())
     }
-}
 
-impl SchemaManager {
-    pub async fn get_schema(&self) -> std::io::Result<RoSchema> {
-        let data_dir = self.data_dir.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut file = File::options()
-                .read(true)
-                .open(get_schema_path(&data_dir))?;
-
-            file.lock_shared()?;
-
-            let mut data = vec![];
-            file.read_to_end(&mut data)?;
-            Ok(RoSchema {
-                schema: Schema::try_from(data.as_slice())?,
-                file,
-            })
-        }).await?
+    pub async fn get_table_manager(&self, name: &str) -> Option<TableManager> {
+        self.schema.read().await.get(name).cloned()
     }
 
-    pub async fn get_mut_schema(&self) -> std::io::Result<MutSchema> {
-        let data_dir = self.data_dir.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut file = File::options()
-                .read(true)
-                .write(true)
-                .open(get_schema_path(&data_dir))?;
-
-            file.lock()?;
-
-            let mut data = vec![];
-            file.read_to_end(&mut data)?;
-            Ok(MutSchema {
-                schema: Schema::try_from(data.as_slice())?,
-                file,
-            })
-        }).await?
+    pub async fn list_tables(&self) -> Vec<String> {
+        self.schema.read().await.keys().cloned().collect()
     }
 }

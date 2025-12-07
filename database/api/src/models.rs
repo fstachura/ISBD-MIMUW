@@ -6,13 +6,6 @@ use validator::Validate;
 
 use crate::{models};
 
-#[allow(dead_code)]
-fn from_validation_error(e: validator::ValidationError) -> validator::ValidationErrors {
-    let mut errs = validator::ValidationErrors::new();
-    errs.add("na", e);
-    errs
-}
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
 #[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
 pub struct GetQueryByIdPathParams {
@@ -257,7 +250,7 @@ impl From<models::CopyQuery> for QueryQueryDefinition {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
 pub struct QueryResultInner {
     /// Number of rows in result
@@ -267,7 +260,6 @@ pub struct QueryResultInner {
 
     /// Array of columns in result (all should have the same length equal to rowCount)
     #[serde(rename = "columns")]
-    #[validate(nested)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub columns: Option<Vec<models::QueryResultInnerColumnsInner>>,
 }
@@ -279,26 +271,6 @@ pub struct QueryResultInner {
 pub enum QueryResultInnerColumnsInner {
     VecOfi64(Arc<Vec<i64>>),
     VecOfString(Arc<Vec<String>>),
-}
-
-impl validator::Validate for QueryResultInnerColumnsInner {
-    fn validate(&self) -> std::result::Result<(), validator::ValidationErrors> {
-        match self {
-            Self::VecOfi64(_) => std::result::Result::Ok(()),
-            Self::VecOfString(_) => std::result::Result::Ok(()),
-        }
-    }
-}
-
-/// Converts Query Parameters representation (style=form, explode=false) to a QueryResultInnerColumnsInner value
-/// as specified in https://swagger.io/docs/specification/serialization/
-/// Should be implemented in a serde deserializer
-impl std::str::FromStr for QueryResultInnerColumnsInner {
-    type Err = serde_json::Error;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        serde_json::from_str(s)
-    }
 }
 
 /// Enum describing possible query statuses
