@@ -66,8 +66,7 @@ pub struct CopyQuery {
     pub destination_table_name: String,
 
     /// List of columns to copy data into. It creates a map from source columns to destination columns. Assumes that data in source file is in the same order as in this list.
-    /// TODO (d)estinationColumns
-    #[serde(rename = "ddestinationColumns")]
+    #[serde(rename = "destinationColumns")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destination_columns: Option<Vec<String>>,
 

@@ -46,14 +46,20 @@ pub enum QueryPlan {
     },
 }
 
+#[derive(Clone, Debug)]
+pub enum QueryPlanError {
+    UnknownColumns(Vec<String>),
+    UnknownTable(String),
+    NotEnoughColumnsInColumnOrder(usize, usize),
+}
 
-pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<QueryPlan, QueryError> {
+pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<QueryPlan, QueryPlanError> {
     match query {
         Query::Select { table } => {
             let table_manager = schema_manager.get_table_manager(&table).await
-                .ok_or(QueryError::UnknownTable(table.clone()))?;
+                .ok_or(QueryPlanError::UnknownTable(table.clone()))?;
             let schema = table_manager.read_schema().await
-                .ok_or(QueryError::UnknownTable(table))?;
+                .ok_or(QueryPlanError::UnknownTable(table))?;
 
             Ok(QueryPlan::Select {
                 table: table_manager.clone(),
@@ -62,16 +68,22 @@ pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<
         },
         Query::Copy { source, target, columns, contains_header } => {
             let table_manager = schema_manager.get_table_manager(&target).await
-                .ok_or(QueryError::UnknownTable(target.clone()))?;
+                .ok_or(QueryPlanError::UnknownTable(target.clone()))?;
             let schema = table_manager.read_schema().await
-                .ok_or(QueryError::UnknownTable(target))?;
+                .ok_or(QueryPlanError::UnknownTable(target))?;
 
             let mut column_order = Vec::new();
             let mut unknown_columns = Vec::new();
             if let Some(columns) = columns {
+                if schema.table.columns().len() != columns.len() {
+                    return Err(QueryPlanError::NotEnoughColumnsInColumnOrder(schema.table.columns().len(), columns.len()));
+                }
+
                 for col in columns {
                     if let None = schema.table.columns().iter().find(|c| c.name == col) {
                         unknown_columns.push(col);
+                    } else {
+                        column_order.push(col);
                     }
                 }
             } else {
@@ -79,7 +91,7 @@ pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<
             }
 
             if !unknown_columns.is_empty() {
-                return Err(QueryError::UnknownColumns(unknown_columns));
+                return Err(QueryPlanError::UnknownColumns(unknown_columns));
             }
 
             Ok(QueryPlan::Copy {

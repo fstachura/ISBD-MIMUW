@@ -2,6 +2,8 @@ use std::{collections::HashMap, error::Error, path::PathBuf, sync::Arc};
 use tokio::{fs::File, sync::{RwLock, mpsc::{self, Receiver, Sender, error::SendError}}, task::{JoinError, spawn_blocking}};
 use uuid::{Uuid};
 
+use crate::query_planner::QueryPlanError;
+
 #[derive(Clone)]
 pub enum Query {
     Copy {
@@ -19,7 +21,6 @@ pub enum Query {
 pub enum Column {
     String(Vec<Vec<Vec<String>>>),
     Int64(Vec<Vec<Vec<i64>>>),
-    Empty,
 }
 
 #[derive(Clone)]
@@ -31,9 +32,8 @@ pub enum QueryResult {
 #[derive(Clone, Debug)]
 pub enum QueryError {
     TableDeleted,
-    UnknownColumns(Vec<String>),
-    UnknownTable(String),
     ExecuteError,
+    PlanError(QueryPlanError),
     Unknown(String),
 }
 

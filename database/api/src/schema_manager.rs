@@ -18,6 +18,7 @@ pub struct TableManager {
 }
 
 pub struct TableLockedForCopy {
+    #[allow(dead_code)]
     copy_token: OwnedMutexGuard<()>,
     read_token: OwnedRwLockReadGuard<LockedTable>,
     table: Arc<RwLock<LockedTable>>,

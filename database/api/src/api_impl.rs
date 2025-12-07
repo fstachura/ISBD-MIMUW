@@ -64,13 +64,15 @@ fn query_state_marker_to_status(marker: &QueryStateMarker) -> models::QueryStatu
 
 fn manager_query_to_model(query: &query_manager::Query) -> models::QueryQueryDefinition {
     match query {
-        query_manager::Query::Copy { source, target, columns, contains_header } =>
+        query_manager::Query::Copy { source, target, columns, contains_header } => {
+            println!("destination columns {:?}", columns);
             models::QueryQueryDefinition::CopyQuery(models::CopyQuery {
                 source_filepath: source.to_string_lossy().to_string(),
                 destination_table_name: target.clone(),
                 destination_columns: columns.clone(),
                 does_csv_contain_header: Some(*contains_header),
-            }),
+            })
+        },
         query_manager::Query::Select { table } =>
             models::QueryQueryDefinition::SelectQuery(models::SelectQuery {
                 table_name: table.clone(),
@@ -110,9 +112,6 @@ fn query_result_to_response(result: &query_manager::QueryResult, row_limit: Opti
                         row_count = Some(column.len());
                         models::QueryResultInnerColumnsInner::VecOfi64(Arc::new(column))
                     },
-                    // TODO
-                    query_manager::Column::Empty =>
-                        models::QueryResultInnerColumnsInner::VecOfi64(Arc::new(vec![]))
                 }).collect();
 
                 models::QueryResultInner {
@@ -137,9 +136,6 @@ fn query_result_to_response(result: &query_manager::QueryResult, row_limit: Opti
                             Arc::new(c.iter().flatten().flatten().cloned().collect())
                         )
                     }
-                    // TODO
-                    query_manager::Column::Empty =>
-                        models::QueryResultInnerColumnsInner::VecOfi64(Arc::new(vec![]))
                 }).collect();
 
                 models::QueryResultInner {
@@ -162,13 +158,15 @@ fn model_query_to_manager_query(
             query_manager::Query::Select {
                 table: s.table_name,
             },
-        models::QueryQueryDefinition::CopyQuery(s) =>
+        models::QueryQueryDefinition::CopyQuery(s) => {
+            println!("destination columns {:?}", s.destination_columns);
             query_manager::Query::Copy {
                 source: s.source_filepath.into(),
                 target: s.destination_table_name,
                 columns: s.destination_columns,
                 contains_header: s.does_csv_contain_header.unwrap_or(false),
-            },
+            }
+        },
     })
 }
 
