@@ -376,7 +376,6 @@ async fn execute_copy(
 
     if result.is_ok() {
         if let Err(err) = table_lock.finish_write().await {
-            // TODO maybe delete files if table was deleted in the meantine
             println!("failed to finish write {err:?}");
             Err(ExecuteError::UnknownError(format!("{err:?}")))
         } else {
@@ -403,8 +402,7 @@ async fn start_reading_column_files(
 
             match file {
                 Ok(file) => {
-                    // TODO spawn_blocked?
-                    column_file_tasks .spawn(async move {
+                    column_file_tasks.spawn(async move {
                         read_file(file).await.map(|data| (i, j, data))
                     });
                 },

@@ -218,7 +218,7 @@ impl SchemaManager {
         }
 
         let mut file = File::options()
-            .create_new(true) // write on schema - table is not being deleted
+            .create_new(true) // we have write on schema - table is not being deleted right now
             .truncate(true)
             .write(true)
             .open(schema_path)
@@ -248,12 +248,21 @@ impl SchemaManager {
             return Err(SchemaError::IoError("failed to remove schema file".into(), err))
         }
 
+        // no writers can take lock during downgrade. readers can still read schema.
+        // adding another table with same name will be impossible as it requires write
+        // on schema
+        let mut schema = schema.downgrade();
+
         let mut table = table_manager.table.write().await;
         table.deleted = true;
 
-        // TODO spawn task that removes files in the background
-        // TODO what if someone creates a table with same name? write lock on table until delete is
-        // completed 
+        for col in table.table.columns() {
+            for path in col.get_file_paths(&self.data_dir) {
+                if let Err(err) = tokio::fs::remove_file(path.clone()).await {
+                    println!("failed to remove column file {:?}", path);
+                }
+            }
+        }
 
         Ok(())
     }
