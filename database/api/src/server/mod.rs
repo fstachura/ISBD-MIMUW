@@ -4,8 +4,8 @@ use axum::{body::Body, extract::*, response::Response, routing::*};
 use axum_extra::extract::{CookieJar, Host, Query as QueryExtra};
 use bytes::Bytes;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header::CONTENT_TYPE};
-use tracing::error;
 use tower_http::trace::TraceLayer;
+use tracing::error;
 use validator::{Validate, ValidationErrors};
 
 #[allow(unused_imports)]
@@ -50,15 +50,15 @@ fn get_query_by_id_validation(
     Ok((path_params,))
 }
 
-async fn generic_json_response<T: Send + Sync + 'static + serde::Serialize>(status: u16, body: T) -> 
-    Result<Result<http::response::Response<Body>, http::Error>, StatusCode> {
-
+async fn generic_json_response<T: Send + Sync + 'static + serde::Serialize>(
+    status: u16,
+    body: T,
+) -> Result<Result<http::response::Response<Body>, http::Error>, StatusCode> {
     let mut response = Response::builder();
     let mut response = response.status(status);
     {
         let mut response_headers = response.headers_mut().unwrap();
-        response_headers
-            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        response_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     }
 
     let body_content = tokio::task::spawn_blocking(move || {
@@ -73,24 +73,17 @@ async fn generic_json_response<T: Send + Sync + 'static + serde::Serialize>(stat
 }
 
 macro_rules! or_bad_request {
-    ($validation:ident) => {
-        {
-            or_bad_request!($validation, path_params)
-        }
-    };
-    ($validation:ident, $target:tt) => {
-        {
-            let Ok($target) = $validation else {
-                return Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body(Body::from($validation.unwrap_err().to_string()))
-                    .map_err(|_| StatusCode::BAD_REQUEST)
-            };
-            $target
-        }
-    };
+    ($validation:ident) => {{ or_bad_request!($validation, path_params) }};
+    ($validation:ident, $target:tt) => {{
+        let Ok($target) = $validation else {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from($validation.unwrap_err().to_string()))
+                .map_err(|_| StatusCode::BAD_REQUEST);
+        };
+        $target
+    }};
 }
-
 
 /// GetQueryById - GET /query/{queryId}
 #[tracing::instrument(skip_all)]
@@ -120,10 +113,12 @@ where
 
     let resp = match result {
         Ok(rsp) => match rsp {
-            apis::query::GetQueryByIdResponse::Status200(body) =>
-                generic_json_response(200, body).await?,
-            apis::query::GetQueryByIdResponse::Status404(body) =>
-                generic_json_response(404, body).await?,
+            apis::query::GetQueryByIdResponse::Status200(body) => {
+                generic_json_response(200, body).await?
+            }
+            apis::query::GetQueryByIdResponse::Status404(body) => {
+                generic_json_response(404, body).await?
+            }
         },
         Err(why) => {
             return api_impl
@@ -178,16 +173,22 @@ where
 
     let resp = match result {
         Ok(rsp) => match rsp {
-            apis::query::GetQueryErrorResponse::Status200(body) => 
-                generic_json_response(200, body).await?,
-            apis::query::GetQueryErrorResponse::Status404(body) =>
-                generic_json_response(404, body).await?,
-            apis::query::GetQueryErrorResponse::Status400(body) =>
-                generic_json_response(400, body).await?,
+            apis::query::GetQueryErrorResponse::Status200(body) => {
+                generic_json_response(200, body).await?
+            }
+            apis::query::GetQueryErrorResponse::Status404(body) => {
+                generic_json_response(404, body).await?
+            }
+            apis::query::GetQueryErrorResponse::Status400(body) => {
+                generic_json_response(400, body).await?
+            }
         },
         Err(why) => {
-            return api_impl.as_ref().handle_error(&method, &host, &cookies, why).await;
-        },
+            return api_impl
+                .as_ref()
+                .handle_error(&method, &host, &cookies, why)
+                .await;
+        }
     };
 
     resp.map_err(|e| {
@@ -255,12 +256,15 @@ where
 
     let resp = match result {
         Ok(rsp) => match rsp {
-            apis::query::GetQueryResultResponse::Status200(body) =>
-                generic_json_response(200, body).await?,
-            apis::query::GetQueryResultResponse::Status404(body) =>
-                generic_json_response(404, body).await?,
-            apis::query::GetQueryResultResponse::Status400(body) =>
-                generic_json_response(400, body).await?,
+            apis::query::GetQueryResultResponse::Status200(body) => {
+                generic_json_response(200, body).await?
+            }
+            apis::query::GetQueryResultResponse::Status404(body) => {
+                generic_json_response(404, body).await?
+            }
+            apis::query::GetQueryResultResponse::Status400(body) => {
+                generic_json_response(400, body).await?
+            }
         },
         Err(why) => {
             return api_impl
@@ -323,14 +327,19 @@ where
 
     let resp = match result {
         Ok(rsp) => match rsp {
-            apis::query::SubmitQueryResponse::Status200(body) =>
-                generic_json_response(200, body).await?,
-            apis::query::SubmitQueryResponse::Status400(body) =>
-                generic_json_response(400, body).await?,
+            apis::query::SubmitQueryResponse::Status200(body) => {
+                generic_json_response(200, body).await?
+            }
+            apis::query::SubmitQueryResponse::Status400(body) => {
+                generic_json_response(400, body).await?
+            }
         },
         Err(why) => {
-            return api_impl.as_ref().handle_error(&method, &host, &cookies, why).await;
-        },
+            return api_impl
+                .as_ref()
+                .handle_error(&method, &host, &cookies, why)
+                .await;
+        }
     };
 
     resp.map_err(|e| {
@@ -373,12 +382,16 @@ where
 
     let resp = match result {
         Ok(rsp) => match rsp {
-            apis::query::GetQueriesResponse::Status200(body) =>
-                generic_json_response(200, body).await?,
+            apis::query::GetQueriesResponse::Status200(body) => {
+                generic_json_response(200, body).await?
+            }
         },
         Err(why) => {
-            return api_impl.as_ref().handle_error(&method, &host, &cookies, why).await;
-        },
+            return api_impl
+                .as_ref()
+                .handle_error(&method, &host, &cookies, why)
+                .await;
+        }
     };
 
     resp.map_err(|e| {
@@ -421,12 +434,16 @@ where
 
     let resp = match result {
         Ok(rsp) => match rsp {
-            apis::metadata::GetSystemInfoResponse::Status200(body) =>
-                generic_json_response(200, body).await?,
+            apis::metadata::GetSystemInfoResponse::Status200(body) => {
+                generic_json_response(200, body).await?
+            }
         },
         Err(why) => {
-            return api_impl.as_ref().handle_error(&method, &host, &cookies, why).await;
-        },
+            return api_impl
+                .as_ref()
+                .handle_error(&method, &host, &cookies, why)
+                .await;
+        }
     };
 
     resp.map_err(|e| {
@@ -482,14 +499,19 @@ where
 
     let resp = match result {
         Ok(rsp) => match rsp {
-            apis::schema::CreateTableResponse::Status200(body) =>
-                generic_json_response(200, body).await?,
-            apis::schema::CreateTableResponse::Status400(body) =>
-                generic_json_response(400, body).await?,
+            apis::schema::CreateTableResponse::Status200(body) => {
+                generic_json_response(200, body).await?
+            }
+            apis::schema::CreateTableResponse::Status400(body) => {
+                generic_json_response(400, body).await?
+            }
         },
         Err(why) => {
-            return api_impl.as_ref().handle_error(&method, &host, &cookies, why).await;
-        },
+            return api_impl
+                .as_ref()
+                .handle_error(&method, &host, &cookies, why)
+                .await;
+        }
     };
 
     resp.map_err(|e| {
@@ -541,8 +563,9 @@ where
                 let mut response = response.status(200);
                 response.body(Body::empty())
             }
-            apis::schema::DeleteTableResponse::Status404(body) =>
-                generic_json_response(404, body).await?,
+            apis::schema::DeleteTableResponse::Status404(body) => {
+                generic_json_response(404, body).await?
+            }
         },
         Err(why) => {
             return api_impl
@@ -597,10 +620,12 @@ where
 
     let resp = match result {
         Ok(rsp) => match rsp {
-            apis::schema::GetTableByIdResponse::Status200(body) =>
-                generic_json_response(200, body).await?,
-            apis::schema::GetTableByIdResponse::Status404(body) =>
-                generic_json_response(404, body).await?,
+            apis::schema::GetTableByIdResponse::Status200(body) => {
+                generic_json_response(200, body).await?
+            }
+            apis::schema::GetTableByIdResponse::Status404(body) => {
+                generic_json_response(404, body).await?
+            }
         },
         Err(why) => {
             return api_impl
@@ -647,8 +672,9 @@ where
 
     let resp = match result {
         Ok(rsp) => match rsp {
-            apis::schema::GetTablesResponse::Status200(body) =>
-                generic_json_response(200, body).await?,
+            apis::schema::GetTablesResponse::Status200(body) => {
+                generic_json_response(200, body).await?
+            }
         },
         Err(why) => {
             return api_impl

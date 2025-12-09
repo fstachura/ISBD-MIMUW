@@ -5,7 +5,7 @@ use bytes::Bytes;
 use http::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::{models};
+use crate::models;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[must_use]

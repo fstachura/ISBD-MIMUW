@@ -1,5 +1,5 @@
-pub mod query;
 pub mod metadata;
+pub mod query;
 pub mod schema;
 
 // Error handler for unhandled errors.

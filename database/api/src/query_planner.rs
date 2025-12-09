@@ -1,12 +1,12 @@
-use std::sync::{Arc};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread::spawn;
 
+use tokio::fs::File;
 use tokio::runtime::{Builder, Runtime};
-use tokio::sync::{MutexGuard, RwLock, RwLockReadGuard, mpsc};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{MutexGuard, RwLock, RwLockReadGuard, mpsc};
 use tokio::task::JoinHandle;
-use tokio::{fs::File};
 use uuid::Uuid;
 
 use crate::query_manager::{Query, QueryError, QueryManager, QueryStateMarker};
@@ -23,7 +23,7 @@ use schema::{Column, ColumnType};
 // schema: directory with json files. read into schema manager on startup. each table has a
 // separate rwlock and copy mutex
 
-// single schema architecture: 
+// single schema architecture:
 
 #[derive(Debug)]
 pub enum QueryPlan {
@@ -51,29 +51,42 @@ pub enum QueryPlanError {
     UnknownColumns(Vec<String>),
     DuplicatedColumns(Vec<String>),
     UnknownTable(String),
-    WrongNumberOfColumnsInOrder {
-        expected: usize,
-        got: usize
-    },
+    WrongNumberOfColumnsInOrder { expected: usize, got: usize },
 }
 
-pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<QueryPlan, QueryPlanError> {
+pub async fn plan_query(
+    schema_manager: &SchemaManager,
+    query: Query,
+) -> Result<QueryPlan, QueryPlanError> {
     match query {
         Query::Select { table } => {
-            let table_manager = schema_manager.get_table_manager(&table).await
+            let table_manager = schema_manager
+                .get_table_manager(&table)
+                .await
                 .ok_or(QueryPlanError::UnknownTable(table.clone()))?;
-            let schema = table_manager.read_schema().await
+            let schema = table_manager
+                .read_schema()
+                .await
                 .ok_or(QueryPlanError::UnknownTable(table))?;
 
             Ok(QueryPlan::Select {
                 table: table_manager.clone(),
                 columns: (*schema.table.columns()).clone(),
             })
-        },
-        Query::Copy { source, target, columns, contains_header } => {
-            let table_manager = schema_manager.get_table_manager(&target).await
+        }
+        Query::Copy {
+            source,
+            target,
+            columns,
+            contains_header,
+        } => {
+            let table_manager = schema_manager
+                .get_table_manager(&target)
+                .await
                 .ok_or(QueryPlanError::UnknownTable(target.clone()))?;
-            let schema = table_manager.read_schema().await
+            let schema = table_manager
+                .read_schema()
+                .await
                 .ok_or(QueryPlanError::UnknownTable(target))?;
 
             let mut column_order: Vec<String> = Vec::new();
@@ -84,7 +97,7 @@ pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<
                     return Err(QueryPlanError::WrongNumberOfColumnsInOrder {
                         expected: columns.len(),
                         got: schema.table.columns().len(),
-                    })
+                    });
                 }
 
                 for col in columns {
@@ -99,7 +112,12 @@ pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<
                     }
                 }
             } else {
-                column_order = schema.table.columns().iter().map(|c| c.name.clone()).collect();
+                column_order = schema
+                    .table
+                    .columns()
+                    .iter()
+                    .map(|c| c.name.clone())
+                    .collect();
             }
 
             if !unknown_columns.is_empty() {
@@ -119,4 +137,3 @@ pub async fn plan_query(schema_manager: &SchemaManager, query: Query) -> Result<
         }
     }
 }
-

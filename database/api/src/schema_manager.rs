@@ -1,7 +1,20 @@
-use tokio::{fs::{File, read_dir, remove_file}, sync::{Mutex, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard}, task::spawn_blocking};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use std::{collections::HashMap, error::Error, io::{self, Read, Seek, SeekFrom, Write}, path::PathBuf, sync::{Arc, atomic::AtomicBool}};
 use schema::{ColumnType, Table, TableError};
+use std::{
+    collections::HashMap,
+    error::Error,
+    io::{self, Read, Seek, SeekFrom, Write},
+    path::PathBuf,
+    sync::{Arc, atomic::AtomicBool},
+};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::{
+    fs::{File, read_dir, remove_file},
+    sync::{
+        Mutex, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock,
+        RwLockReadGuard,
+    },
+    task::spawn_blocking,
+};
 
 #[derive(Debug)]
 pub struct LockedTable {
@@ -36,7 +49,7 @@ pub enum FinishWriteError {
 impl TableLockedForCopy {
     pub fn table(&self) -> Option<(&Table, &PathBuf)> {
         if self.read_token.deleted {
-            None    
+            None
         } else {
             Some((&self.read_token.table, &self.read_token.data_dir))
         }
@@ -57,11 +70,15 @@ impl TableLockedForCopy {
                     .create(false)
                     .open(self.schema_path)
                     .await
-                    .map_err(|e| FinishWriteError::IoError("failed to open table file".into(), e))?;
+                    .map_err(|e| {
+                        FinishWriteError::IoError("failed to open table file".into(), e)
+                    })?;
 
                 flush_table(&mut file, &write_lock.table)
                     .await
-                    .map_err(|e| FinishWriteError::IoError("failed to write table file".into(), e))?;
+                    .map_err(|e| {
+                        FinishWriteError::IoError("failed to write table file".into(), e)
+                    })?;
                 Ok(())
             } else {
                 Err(FinishWriteError::InvalidFilenames)
@@ -79,7 +96,7 @@ pub struct TableLockedForSelect {
 impl TableLockedForSelect {
     pub fn table(&self) -> Option<(&Table, &PathBuf)> {
         if self.read_token.deleted {
-            None    
+            None
         } else {
             Some((&self.read_token.table, &self.read_token.data_dir))
         }
@@ -88,12 +105,12 @@ impl TableLockedForSelect {
 
 impl TableManager {
     fn new(schema_path: PathBuf, data_dir: PathBuf, table: Table) -> Self {
-        TableManager { 
+        TableManager {
             table: Arc::new(RwLock::new(LockedTable {
                 data_dir,
                 table,
                 deleted: false,
-            })), 
+            })),
             schema_path,
             copy_mutex: Arc::new(Mutex::new(())),
         }
@@ -110,7 +127,7 @@ impl TableManager {
         let read_token = self.table.clone().read_owned().await;
         let copy_targets = read_token.table.new_filenames();
         TableLockedForCopy {
-            copy_token, 
+            copy_token,
             read_token,
             table: self.table.clone(),
             schema_path: self.schema_path.clone(),
@@ -120,11 +137,7 @@ impl TableManager {
 
     pub async fn read_schema<'a>(&'a self) -> Option<RwLockReadGuard<'a, LockedTable>> {
         let table = self.table.read().await;
-        if table.deleted {
-            None
-        } else {
-            Some(table)
-        }
+        if table.deleted { None } else { Some(table) }
     }
 }
 
@@ -159,27 +172,33 @@ impl SchemaManager {
         let mut dir = read_dir(schema_dir.clone()).await?;
         while let Some(entry) = dir.next_entry().await? {
             let filename = entry.file_name();
-            let filename = filename.to_str()
-                .ok_or(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("failed to convert schema filename {:?}", entry.file_name())
-                ))?;
+            let filename = filename.to_str().ok_or(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to convert schema filename {:?}", entry.file_name()),
+            ))?;
 
             if filename.ends_with(".json") {
                 let mut file = File::open(entry.path()).await?;
                 let mut buf = vec![];
                 file.read_to_end(&mut buf).await?;
-                let table: Table = buf.as_slice().try_into()
-                    .map_err(|e: <Table as TryFrom<&[u8]>>::Error| Into::<std::io::Error>::into(e))?;
+                let table: Table =
+                    buf.as_slice()
+                        .try_into()
+                        .map_err(|e: <Table as TryFrom<&[u8]>>::Error| {
+                            Into::<std::io::Error>::into(e)
+                        })?;
 
                 schema_map.insert(
                     table.name().clone(),
-                    TableManager::new(entry.path(), data_dir.clone(), table)
+                    TableManager::new(entry.path(), data_dir.clone(), table),
                 );
             } else {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("non-json file found in schema directory {:?}", entry.file_name())
+                    format!(
+                        "non-json file found in schema directory {:?}",
+                        entry.file_name()
+                    ),
                 ));
             }
         }
@@ -191,25 +210,21 @@ impl SchemaManager {
         })
     }
 
-    pub async fn create_table(&self, name: String, columns: &[(String, ColumnType)]) ->
-        Result<TableManager, SchemaError> {
-
+    pub async fn create_table(
+        &self,
+        name: String,
+        columns: &[(String, ColumnType)],
+    ) -> Result<TableManager, SchemaError> {
         // NOTE: assuming table checks if name is valid
-        let table = Table::new(name.clone(), columns)
-            .map_err(SchemaError::TableError)?;
+        let table = Table::new(name.clone(), columns).map_err(SchemaError::TableError)?;
 
-        let schema_path = self.schema_dir
-            .join(name.clone() + ".json");
+        let schema_path = self.schema_dir.join(name.clone() + ".json");
 
         let table_json: String = (&table)
             .try_into()
             .map_err(|v| SchemaError::SerdeError(v))?;
 
-        let manager = TableManager::new(
-            schema_path.clone(),
-            self.data_dir.clone(),
-            table
-        );
+        let manager = TableManager::new(schema_path.clone(), self.data_dir.clone(), table);
 
         let mut schema = self.schema.write().await;
 
@@ -223,15 +238,16 @@ impl SchemaManager {
             .write(true)
             .open(schema_path)
             .await
-            .map_err(|e|
-                SchemaError::IoError("failed to create schema file".into(), e)
-            )?;
+            .map_err(|e| SchemaError::IoError("failed to create schema file".into(), e))?;
 
         schema.insert(name.clone(), manager.clone());
 
         if let Err(err) = file.write_all(table_json.as_bytes()).await {
             schema.remove(&name);
-            Err(SchemaError::IoError("failed to write schema file".into(), err))
+            Err(SchemaError::IoError(
+                "failed to write schema file".into(),
+                err,
+            ))
         } else {
             Ok(manager)
         }
@@ -240,12 +256,16 @@ impl SchemaManager {
     pub async fn delete_table(&self, name: &str) -> Result<(), SchemaError> {
         let mut schema = self.schema.write().await;
 
-        let mut table_manager = schema.remove(name)
+        let mut table_manager = schema
+            .remove(name)
             .ok_or(SchemaError::UnknownTable(name.to_string()))?;
 
         if let Err(err) = remove_file(table_manager.schema_path.clone()).await {
             schema.insert(name.to_string(), table_manager);
-            return Err(SchemaError::IoError("failed to remove schema file".into(), err))
+            return Err(SchemaError::IoError(
+                "failed to remove schema file".into(),
+                err,
+            ));
         }
 
         // no writers can take lock during downgrade. readers can still read schema.

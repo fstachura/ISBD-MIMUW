@@ -14,26 +14,26 @@
     clippy::too_many_arguments
 )]
 
-pub mod consts;
-pub mod server;
-pub mod apis;
-pub mod models;
-pub mod schema_manager;
-pub mod query_manager;
-pub mod query_executor;
-pub mod query_planner;
 pub mod api_impl;
+pub mod apis;
+pub mod consts;
+pub mod models;
+pub mod query_executor;
+pub mod query_manager;
+pub mod query_planner;
+pub mod schema_manager;
+pub mod server;
 
+use schema::ColumnType;
 use std::time::Duration;
 use std::{env::args, path::Path, process::ExitCode, sync::Arc};
-use schema::ColumnType;
 use tokio::{sync::RwLock, time::Instant};
 use tracing_subscriber::EnvFilter;
 
+use crate::api_impl::ApiImpl;
 use crate::query_executor::start_query_executor;
 use crate::query_manager::{QueryManager, QueryResult, QueryStateMarker};
 use crate::schema_manager::SchemaManager;
-use crate::api_impl::ApiImpl;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -60,12 +60,15 @@ async fn main() -> ExitCode {
             schema::create_schema_dir(Path::new(&data_dir)).unwrap();
             println!("data directory initialized");
             return ExitCode::SUCCESS;
-        },
+        }
         "serve" => {
             let (qm, query_receiver) = QueryManager::new();
-            let sm = SchemaManager::new((data_dir.clone() + "/schema").into(), (data_dir + "/data").into())
-                .await
-                .expect("failed to create schema manager");
+            let sm = SchemaManager::new(
+                (data_dir.clone() + "/schema").into(),
+                (data_dir + "/data").into(),
+            )
+            .await
+            .expect("failed to create schema manager");
 
             let qe_handle = start_query_executor(sm.clone(), qm.clone(), query_receiver).await;
 
@@ -76,14 +79,16 @@ async fn main() -> ExitCode {
             });
 
             let app = server::new(api);
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await.unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+                .await
+                .unwrap();
             axum::serve(listener, app).await.unwrap();
             qe_handle.await.unwrap();
-        },
+        }
         _ => {
             println!("invalid cmd. valid cmd: init, serve");
             return ExitCode::FAILURE;
-        },
+        }
     };
 
     ExitCode::SUCCESS
