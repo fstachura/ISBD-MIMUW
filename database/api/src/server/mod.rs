@@ -5,6 +5,7 @@ use axum_extra::extract::{CookieJar, Host, Query as QueryExtra};
 use bytes::Bytes;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header::CONTENT_TYPE};
 use tracing::error;
+use tower_http::trace::TraceLayer;
 use validator::{Validate, ValidationErrors};
 
 #[allow(unused_imports)]
@@ -37,6 +38,7 @@ where
         )
         .route("/tables", get(get_tables::<I, A, E>))
         .with_state(api_impl)
+        .layer(TraceLayer::new_for_http())
 }
 
 #[tracing::instrument(skip_all)]

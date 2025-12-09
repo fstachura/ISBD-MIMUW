@@ -1,4 +1,4 @@
-use std::{path::{Path, PathBuf}, string::ToString};
+use std::{collections::HashMap, path::{Path, PathBuf}, string::ToString};
 use std::fs::{create_dir_all};
 use serde::{Deserialize, Serialize};
 
@@ -68,7 +68,32 @@ impl Table {
             .map(|x| x.0.clone())
             .collect();
 
-        // TODO check if column names are unique
+        let mut column_counts = HashMap::new();
+        for (col_name, _) in columns {
+            column_counts
+                .entry(col_name)
+                .and_modify(|c| *c += 1)
+                .or_insert(1);
+        }
+
+        let duplicated_columns: Vec<&String> = column_counts
+            .drain()
+            .filter(|(_, count)| *count > 1)
+            .map(|(name, _)| name)
+            .collect();
+
+        if duplicated_columns.len() > 0 {
+            return Err(
+                TableError::DuplicatedColumns(
+                    name,
+                    duplicated_columns
+                        .iter()
+                        .map(|v| (*v).clone())
+                        .collect()
+                )
+            );
+        }
+
         if invalid_columns.len() > 0 {
             return Err(TableError::InvalidColumnName(name, invalid_columns))
         }

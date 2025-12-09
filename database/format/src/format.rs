@@ -107,7 +107,7 @@ pub fn parse_chunk_header(buf: &[u8; CHUNK_HEADER_SIZE]) -> Result<ChunkHeader, 
 
 // does not take a write because it needs to calculate chunk size to write the whole chunk.
 pub fn create_int64_chunk(nums: &[i64]) -> Vec<u8> {
-    let mut result = Vec::with_capacity(CHUNK_HEADER_SIZE);
+    let mut result = Vec::with_capacity(CHUNK_HEADER_SIZE + nums.len()*4);
 
     // write chunk len
     result.extend_from_slice(&0_u64.to_be_bytes());

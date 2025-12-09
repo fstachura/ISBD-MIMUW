@@ -17,13 +17,13 @@ pub enum Query {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Column {
     String(Vec<Vec<Vec<String>>>),
     Int64(Vec<Vec<Vec<i64>>>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum QueryResult {
     Copy,
     Select(Arc<Vec<Column>>)

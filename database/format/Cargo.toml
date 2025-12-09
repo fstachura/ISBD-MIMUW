@@ -7,4 +7,4 @@ edition = "2024"
 debug = true
 
 [dependencies]
-zstd = "0.13"
+zstd = { version = "0.13" }

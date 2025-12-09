@@ -1,10 +1,12 @@
 use std::collections;
+use std::io::BufReader;
 use std::num::ParseIntError;
 use std::string::ParseError;
 use std::sync::{Arc};
 use std::path::PathBuf;
 use std::thread::spawn;
 use std::iter::Enumerate;
+use std::time::{Duration, Instant};
 
 use chrono::format::parse_and_remainder;
 use tokio::io::{AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWriteExt};
@@ -189,6 +191,7 @@ async fn write_task(
                         .map_err(|e| ExecuteError::IoError("failed to write ints".to_string(), e))
                         .map(|_| ())
                 } else {
+                    println!("failed to parse ints {chunk:?}");
                     nums
                         .map_err(|e| ExecuteError::ParseIntError(e))
                         .map(|_| ())
@@ -248,10 +251,16 @@ async fn execute_copy(
 
     println!("final column order {:?}", final_column_order);
 
+    let mut csv_file = std::fs::File::options()
+        .read(true)
+        .write(false)
+        .open(source)
+        .map_err(|e| ExecuteError::IoError("failed to open csv file".into(), e))?;
+
     let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b';')
         .has_headers(has_header)
-        .from_path(source)
-        .map_err(ExecuteError::CsvError)?;
+        .from_reader(BufReader::with_capacity(1024*1024, csv_file));
 
     let mut writing_tasks = JoinSet::new();
 
@@ -275,7 +284,7 @@ async fn execute_copy(
 
             write_header_async(&mut file, typ, 0).await?;
 
-            let (tx, mut rx) = mpsc::channel::<Vec<String>>(16);
+            let (tx, mut rx) = mpsc::channel::<Vec<String>>(128);
 
             let handle = writing_tasks.spawn(
                 write_task(rx, typ, file)
@@ -287,12 +296,11 @@ async fn execute_copy(
         column_channels
     };
 
-    println!("spawned routines");
-
     let mut result = Ok(());
     let mut chunks = vec![Vec::with_capacity(COPY_BATCH_SIZE); column_channels.len()];
     let mut chunk_len = 0;
 
+    let csv_start = Instant::now();
     // batch records, pass to writing tasks
     for record in reader.records() {
         match record {
@@ -329,6 +337,7 @@ async fn execute_copy(
             },
         }
     }
+    println!("reading csv took {}ms", (Instant::now()-csv_start).as_millis());
 
     // send remaining chunk
     if result.is_err() {
@@ -350,11 +359,18 @@ async fn execute_copy(
 
     // join tasks, handle errors
     while let Some(join_result) = writing_tasks.join_next().await {
-        if let Err(err) = join_result {
-            if err.is_panic() {
-                println!("coroutine panicked {err:?}");
-                result = Err(ExecuteError::UnknownError(format!("writing coroutine panicked {err:?}")));
-            }
+        match join_result {
+            Err(err) => {
+                if err.is_panic() {
+                    println!("coroutine panicked {err:?}");
+                    result = Err(ExecuteError::UnknownError(format!("writing coroutine panicked {err:?}")));
+                }
+            },
+            Ok(Err(err)) => {
+                println!("coroutine retrned error {err:?}");
+                result = Err(ExecuteError::UnknownError(format!("writing coroutine returned error {err:?}")));
+            },
+            Ok(Ok(_)) => ()
         }
     }
 
@@ -527,14 +543,13 @@ pub async fn executor_loop(
 
         match plan {
             QueryPlan::Copy { source, column_order, contains_header, table } => {
-                println!("copy query");
                 let state_marker_clone = state_marker.clone();
                 let spawn_result = tokio::spawn(async move {
-                    println!("in copy spawn");
                     let locked_table = table.lock_copy().await;
-                    println!("locked table");
+                    let start = Instant::now();
                     match execute_copy(locked_table, source, contains_header, column_order).await {
                         Ok(()) => {
+                            println!("execute copy took {}ms", (Instant::now()-start).as_millis());
                             *state_marker.write().await = QueryStateMarker::Completed(
                                 query_manager::QueryResult::Copy
                             );

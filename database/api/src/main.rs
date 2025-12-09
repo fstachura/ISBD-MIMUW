@@ -24,18 +24,21 @@ pub mod query_executor;
 pub mod query_planner;
 pub mod api_impl;
 
+use std::time::Duration;
 use std::{env::args, path::Path, process::ExitCode, sync::Arc};
+use schema::ColumnType;
 use tokio::{sync::RwLock, time::Instant};
+use tracing_subscriber::EnvFilter;
 
 use crate::query_executor::start_query_executor;
-use crate::query_manager::QueryManager;
+use crate::query_manager::{QueryManager, QueryResult, QueryStateMarker};
 use crate::schema_manager::SchemaManager;
 use crate::api_impl::ApiImpl;
 
 #[tokio::main]
 async fn main() -> ExitCode {
     let mut args = args();
-    if args.len() != 3 {
+    if args.len() < 3 {
         println!("usage: (init|serve) data_dir");
         return ExitCode::FAILURE;
     }
@@ -43,6 +46,14 @@ async fn main() -> ExitCode {
     let _ = args.next().unwrap();
     let cmd = args.next().unwrap();
     let data_dir = args.next().unwrap();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .or_else(|_| EnvFilter::try_new("tower_http=debug"))
+                .unwrap(),
+        )
+        .init();
 
     match cmd.as_str() {
         "init" => {

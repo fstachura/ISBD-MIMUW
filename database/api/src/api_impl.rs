@@ -65,7 +65,6 @@ fn query_state_marker_to_status(marker: &QueryStateMarker) -> models::QueryStatu
 fn manager_query_to_model(query: &query_manager::Query) -> models::QueryQueryDefinition {
     match query {
         query_manager::Query::Copy { source, target, columns, contains_header } => {
-            println!("destination columns {:?}", columns);
             models::QueryQueryDefinition::CopyQuery(models::CopyQuery {
                 source_filepath: source.to_string_lossy().to_string(),
                 destination_table_name: target.clone(),
@@ -81,7 +80,6 @@ fn manager_query_to_model(query: &query_manager::Query) -> models::QueryQueryDef
 }
 
 fn query_error_to_problems(error: &QueryError) -> models::MultipleProblemsError {
-    // TODO
     models::MultipleProblemsError {
         problems: vec![],
     }
@@ -159,7 +157,6 @@ fn model_query_to_manager_query(
                 table: s.table_name,
             },
         models::QueryQueryDefinition::CopyQuery(s) => {
-            println!("destination columns {:?}", s.destination_columns);
             query_manager::Query::Copy {
                 source: s.source_filepath.into(),
                 target: s.destination_table_name,
@@ -269,7 +266,6 @@ impl QueryApi<ApiError> for ApiImpl {
                 let query_state = query.1.read().await;
                 match &*query_state {
                     QueryStateMarker::Completed(result) =>
-                        // TODO why array of arrays?
                         GetQueryResultResponse::Status200(query_result_to_response(result, row_limit)),
                     _ =>
                         GetQueryResultResponse::Status400(models::Error {
@@ -324,25 +320,59 @@ impl QueryApi<ApiError> for ApiImpl {
 fn schema_error_to_model_problems(err: SchemaError) -> Option<MultipleProblemsError> {
     Some(match err {
         SchemaError::TableExists(name) =>
-            MultipleProblemsError { problems: vec![ MultipleProblemsErrorProblemsInner {
-                error: "table exists".into(), context: Some(name),
-            } ] },
+            MultipleProblemsError {
+                problems: vec![
+                    MultipleProblemsErrorProblemsInner {
+                        error: "table exists".into(),
+                        context: Some(name),
+                    }
+                ]
+            },
         SchemaError::UnknownTable(name) =>
-            MultipleProblemsError { problems: vec![ MultipleProblemsErrorProblemsInner {
-                error: "unknown table".into(), context: Some(name),
-            } ] },
+            MultipleProblemsError {
+                problems: vec![
+                    MultipleProblemsErrorProblemsInner {
+                        error: "unknown table".into(),
+                        context: Some(name),
+                    }
+                ] 
+            },
         SchemaError::TableError(TableError::InvalidTableName(name)) =>
-            MultipleProblemsError { problems: vec![ MultipleProblemsErrorProblemsInner {
-                error: "invalid table name".into(), context: Some(name),
-            } ] },
+            MultipleProblemsError {
+                problems: vec![
+                    MultipleProblemsErrorProblemsInner {
+                        error: "invalid table name".into(),
+                        context: Some(name),
+                    }
+                ]
+            },
         SchemaError::TableError(TableError::InvalidColumnName(table, names)) =>
-            MultipleProblemsError { problems: vec![ MultipleProblemsErrorProblemsInner {
-                error: "invalid column name(s)".to_string() + &names.join(", "), context: Some(table),
-            } ] },
+            MultipleProblemsError {
+                problems: vec![
+                    MultipleProblemsErrorProblemsInner {
+                        error: "invalid column name(s)".to_string() + &names.join(", "),
+                        context: Some(table),
+                    } 
+                ] 
+            },
         SchemaError::TableError(TableError::NoColumns(name)) =>
-            MultipleProblemsError { problems: vec![ MultipleProblemsErrorProblemsInner {
-                error: "cannot create table without columns".into(), context: Some(name),
-            } ] },
+            MultipleProblemsError {
+                problems: vec![
+                    MultipleProblemsErrorProblemsInner {
+                        error: "cannot create table without columns".into(),
+                        context: Some(name),
+                    }
+                ]
+            },
+        SchemaError::TableError(TableError::DuplicatedColumns(name, mut columns)) =>
+            MultipleProblemsError {
+                problems: columns.drain(..).map(|c| {
+                    MultipleProblemsErrorProblemsInner {
+                        error: format!("duplicated column: {c}"),
+                        context: Some(name.clone()),
+                    }
+                }).collect(),
+            },
         _ => {
             println!("encountered unknown error {err:?}");
             return None

@@ -198,11 +198,18 @@ impl SchemaManager {
         let table = Table::new(name.clone(), columns)
             .map_err(SchemaError::TableError)?;
 
-        let schema_path = self.schema_dir.join(name.clone() + ".json");
-        let table_json: String = (&table).try_into()
+        let schema_path = self.schema_dir
+            .join(name.clone() + ".json");
+
+        let table_json: String = (&table)
+            .try_into()
             .map_err(|v| SchemaError::SerdeError(v))?;
 
-        let manager = TableManager::new(schema_path.clone(), self.data_dir.clone(), table);
+        let manager = TableManager::new(
+            schema_path.clone(),
+            self.data_dir.clone(),
+            table
+        );
 
         let mut schema = self.schema.write().await;
 
@@ -216,7 +223,9 @@ impl SchemaManager {
             .write(true)
             .open(schema_path)
             .await
-            .map_err(|e| SchemaError::IoError("failed to create schema file".into(), e))?;
+            .map_err(|e|
+                SchemaError::IoError("failed to create schema file".into(), e)
+            )?;
 
         schema.insert(name.clone(), manager.clone());
 

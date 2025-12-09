@@ -14,6 +14,9 @@ conversion = [
     "frunk-enum-derive",
 ]
 
+[profile.release]
+debug = true
+
 [dependencies]
 schema = { path = "../schema" }
 format = { path = "../format" }
@@ -37,10 +40,13 @@ serde_html_form = "0.2"
 serde_json = { version = "1", features = ["raw_value"] }
 tokio = { version = "1", default-features = false, features = ["signal", "rt-multi-thread", "fs", "io-util"] }
 tracing = { version = "0.1", features = ["attributes"] }
+tracing-subscriber = { version = "0.3.19", features=["env-filter"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 validator = { version = "0.20", features = ["derive"] }
 csv = "1.4.0"
 itertools = "0.14.0"
+tower = "0.5.2"
+tower-http = { version = "0.6.7", features = ["trace"] }
 
 [dev-dependencies]
 tracing-subscriber = "0.3"
