@@ -28,6 +28,7 @@ use schema::ColumnType;
 use std::time::Duration;
 use std::{env::args, path::Path, process::ExitCode, sync::Arc};
 use tokio::{sync::RwLock, time::Instant};
+use tracing::{Level, event};
 use tracing_subscriber::EnvFilter;
 
 use crate::api_impl::ApiImpl;
@@ -50,7 +51,7 @@ async fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .or_else(|_| EnvFilter::try_new("tower_http=debug"))
+                .or_else(|_| EnvFilter::try_new("info,openapi=debug,tower_http=debug"))
                 .unwrap(),
         )
         .init();

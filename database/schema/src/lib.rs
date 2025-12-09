@@ -138,7 +138,7 @@ impl Table {
             return Err(())
         }
 
-        for (col, (name, typ, filename)) in self.columns.iter().zip(filenames.iter()) {
+        for (col, (name, typ, _filename)) in self.columns.iter().zip(filenames.iter()) {
             if col.name != *name && col.column_type != *typ {
                 return Err(())
             }

@@ -39,7 +39,13 @@ pub enum QueryResult {
 #[derive(Clone, Debug)]
 pub enum QueryError {
     TableDeleted,
-    ExecuteError,
+    FailedToParseCsv(Option<String>),
+    WrongRecordSize {
+        table_name: String,
+        expected: usize,
+        got: usize,
+    },
+    UnknownColumn(String, String),
     PlanError(QueryPlanError),
     Unknown(String),
 }

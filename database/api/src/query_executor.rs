@@ -16,6 +16,7 @@ use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{MutexGuard, RwLock, RwLockReadGuard, mpsc};
 use tokio::task::{JoinError, JoinHandle, JoinSet};
+use tracing::{Level, event};
 use uuid::Uuid;
 
 use crate::query_manager::{self, Query, QueryError, QueryManager, QueryStateMarker};
@@ -32,7 +33,7 @@ const COPY_BATCH_SIZE: usize = 8192;
 
 #[derive(Debug)]
 #[allow(dead_code)]
-enum ReadError {
+pub enum ReadError {
     DeserializerError(String, DeserializerError),
     IoError(String, std::io::Error),
 }
@@ -108,14 +109,18 @@ async fn read_file(mut file: File) -> Result<ReadResult, ReadError> {
 
 #[derive(Debug)]
 #[allow(dead_code)]
-enum ExecuteError {
+pub enum ExecuteError {
     IoError(String, std::io::Error),
     CsvError(csv::Error),
-    WrongRecordSize(usize, usize),
-    UnknownColumn(String),
+    WrongRecordSize {
+        table_name: String,
+        expected: usize,
+        got: usize,
+    },
+    UnknownColumn(String, String),
     ReadError(ReadError),
     UnknownError(String),
-    ParseIntError(ParseIntError),
+    ParseIntError(Option<String>, ParseIntError),
     TableDeleted,
 }
 
@@ -126,6 +131,7 @@ enum SelectResult {
 }
 
 fn verify_column_order(
+    table_name: &String,
     data_dir: &PathBuf,
     targets: &Vec<(String, ColumnType, String)>,
     column_order: &Vec<String>,
@@ -144,7 +150,7 @@ fn verify_column_order(
         }
 
         if !found {
-            return Err(ExecuteError::UnknownColumn(o.clone()));
+            return Err(ExecuteError::UnknownColumn(table_name.clone(), o.clone()));
         }
     }
 
@@ -182,6 +188,7 @@ async fn write_task(
     mut rx: Receiver<Vec<String>>,
     column_type: ColumnType,
     mut file: File,
+    source_filepath: Option<String>,
 ) -> Result<(), ExecuteError> {
     let mut result = Ok(());
     let mut chunks = 0;
@@ -198,8 +205,9 @@ async fn write_task(
                         .map_err(|e| ExecuteError::IoError("failed to write ints".to_string(), e))
                         .map(|_| ())
                 } else {
-                    println!("failed to parse ints {chunk:?}");
-                    nums.map_err(|e| ExecuteError::ParseIntError(e)).map(|_| ())
+                    event!(Level::ERROR, "failed to parse ints {chunk:?}");
+                    nums.map_err(|e| ExecuteError::ParseIntError(source_filepath.clone(), e))
+                        .map(|_| ())
                 }
             }
             ColumnType::VARCHAR => {
@@ -220,7 +228,7 @@ async fn write_task(
         };
 
         if result.is_err() {
-            println!("failed to write chunk {:?}", result);
+            event!(Level::ERROR, "failed to write chunk {:?}", result);
             break; // quits, next queue send will fail because rx was dropped
         }
     }
@@ -229,7 +237,7 @@ async fn write_task(
         write_header_async(&mut file, column_type, chunks).await?;
         Ok(())
     } else {
-        println!("error {result:?}");
+        event!(Level::ERROR, "write task error {result:?}");
         result
     }
 }
@@ -254,14 +262,14 @@ async fn execute_copy(
 
     let targets = table_lock.copy_targets().clone();
 
-    let final_column_order = verify_column_order(data_dir, &targets, &column_order)?;
+    let final_column_order = verify_column_order(table.name(), data_dir, &targets, &column_order)?;
 
-    println!("final column order {:?}", final_column_order);
+    event!(Level::DEBUG, "final column order {:?}", final_column_order);
 
     let mut csv_file = std::fs::File::options()
         .read(true)
         .write(false)
-        .open(source)
+        .open(source.clone())
         .map_err(|e| ExecuteError::IoError("failed to open csv file".into(), e))?;
 
     let mut reader = csv::ReaderBuilder::new()
@@ -276,7 +284,7 @@ async fn execute_copy(
         let mut column_channels = vec![];
 
         for (name, typ, path) in final_column_order {
-            println!("opened {path:?}");
+            event!(Level::DEBUG, "opened {path:?}");
 
             let mut file = File::options()
                 .write(true)
@@ -295,7 +303,12 @@ async fn execute_copy(
 
             let (tx, mut rx) = mpsc::channel::<Vec<String>>(128);
 
-            let handle = writing_tasks.spawn(write_task(rx, typ, file));
+            let handle = writing_tasks.spawn(write_task(
+                rx,
+                typ,
+                file,
+                source.to_str().map(|v| v.to_string()),
+            ));
 
             column_channels.push((tx, handle));
         }
@@ -313,10 +326,11 @@ async fn execute_copy(
         match record {
             Ok(v) => {
                 if v.len() < column_channels.len() {
-                    result = Err(ExecuteError::WrongRecordSize(
-                        v.len(),
-                        column_channels.len(),
-                    ));
+                    result = Err(ExecuteError::WrongRecordSize {
+                        table_name: table.name().clone(),
+                        expected: column_channels.len(),
+                        got: v.len(),
+                    });
                     break;
                 }
 
@@ -328,7 +342,7 @@ async fn execute_copy(
                 if chunk_len >= CHUNK_HEADER_SIZE {
                     for (chunk, (tx, handle)) in chunks.drain(..).zip(column_channels.iter()) {
                         if let Err(err) = tx.send(chunk).await {
-                            println!("send error {:?}", err);
+                            // event!(Level::DEBUG, "chunk send error {:?}", err);
                             result = Err(ExecuteError::UnknownError(format!("{:?}", err)));
                             break;
                         }
@@ -347,7 +361,8 @@ async fn execute_copy(
             }
         }
     }
-    println!(
+    event!(
+        Level::INFO,
         "reading csv took {}ms",
         (Instant::now() - csv_start).as_millis()
     );
@@ -358,7 +373,7 @@ async fn execute_copy(
     } else if chunk_len > 0 {
         for (chunk, (tx, handle)) in chunks.drain(..).zip(column_channels.iter()) {
             if let Err(err) = tx.send(chunk).await {
-                println!("send error {:?}", err);
+                event!(Level::ERROR, "chunk send error {:?}", err);
                 result = Err(ExecuteError::UnknownError(format!("{:?}", err)));
                 break;
             }
@@ -375,17 +390,15 @@ async fn execute_copy(
         match join_result {
             Err(err) => {
                 if err.is_panic() {
-                    println!("coroutine panicked {err:?}");
+                    event!(Level::ERROR, "write task panicked {err:?}");
                     result = Err(ExecuteError::UnknownError(format!(
-                        "writing coroutine panicked {err:?}"
+                        "write task panicked {err:?}"
                     )));
                 }
             }
             Ok(Err(err)) => {
-                println!("coroutine retrned error {err:?}");
-                result = Err(ExecuteError::UnknownError(format!(
-                    "writing coroutine returned error {err:?}"
-                )));
+                event!(Level::ERROR, "write task retrned error {err:?}");
+                result = Err(err);
             }
             Ok(Ok(_)) => (),
         }
@@ -393,7 +406,7 @@ async fn execute_copy(
 
     if result.is_ok() {
         if let Err(err) = table_lock.finish_write().await {
-            println!("failed to finish write {err:?}");
+            event!(Level::ERROR, "failed to finish write {err:?}");
             Err(ExecuteError::UnknownError(format!("{err:?}")))
         } else {
             Ok(())
@@ -489,14 +502,14 @@ async fn execute_select(
                 col_vec.push((chunk, data));
             }
             Ok(Err(read_err)) => {
-                println!("read task failed {:?}", read_err);
+                event!(Level::ERROR, "read task failed {:?}", read_err);
                 last_nonjoin_error = Some(ExecuteError::ReadError(read_err));
                 column_file_tasks.abort_all();
             }
             Err(join_err) => {
                 if join_err.is_panic() {
                     let msg = format!("read task panicked {:?}", join_err.into_panic());
-                    println!("{}", msg.clone());
+                    event!(Level::ERROR, "read task panicked {}", msg.clone());
                     last_nonjoin_error = Some(ExecuteError::UnknownError(msg));
                 }
                 column_file_tasks.abort_all();
@@ -538,6 +551,25 @@ async fn execute_select(
     }
 }
 
+fn execute_error_to_query_error(err: ExecuteError) -> QueryError {
+    match err {
+        ExecuteError::WrongRecordSize {
+            table_name,
+            expected,
+            got,
+        } => QueryError::WrongRecordSize {
+            table_name,
+            expected,
+            got,
+        },
+        ExecuteError::UnknownColumn(table_name, name) => {
+            QueryError::UnknownColumn(table_name, name)
+        }
+        ExecuteError::ParseIntError(file_path, _) => QueryError::FailedToParseCsv(file_path),
+        _ => QueryError::Unknown("encountered an unknown error during execution".into()),
+    }
+}
+
 pub async fn executor_loop(
     schema_manager: SchemaManager,
     mut plan_rx: Receiver<(QueryPlan, Arc<RwLock<QueryStateMarker>>)>,
@@ -555,12 +587,13 @@ pub async fn executor_loop(
                 table,
             } => {
                 let state_marker_clone = state_marker.clone();
+                let locked_table = table.lock_copy().await;
                 let spawn_result = tokio::spawn(async move {
-                    let locked_table = table.lock_copy().await;
                     let start = Instant::now();
                     match execute_copy(locked_table, source, contains_header, column_order).await {
                         Ok(()) => {
-                            println!(
+                            event!(
+                                Level::INFO,
                                 "execute copy took {}ms",
                                 (Instant::now() - start).as_millis()
                             );
@@ -568,16 +601,16 @@ pub async fn executor_loop(
                                 QueryStateMarker::Completed(query_manager::QueryResult::Copy);
                         }
                         Err(err) => {
-                            println!("copy error {:?}", err);
+                            event!(Level::ERROR, "copy error {:?}", err);
                             *state_marker.write().await =
-                                QueryStateMarker::Failed(QueryError::ExecuteError);
+                                QueryStateMarker::Failed(execute_error_to_query_error(err));
                         }
                     }
                 });
             }
             QueryPlan::Select { columns, table } => {
+                let locked_table = table.lock_select().await;
                 tokio::spawn(async move {
-                    let locked_table = table.lock_select().await;
                     if let Some((table, data_dir)) = locked_table.table() {
                         match execute_select(&data_dir, table.columns()).await {
                             Ok(mut result) => {
@@ -598,11 +631,9 @@ pub async fn executor_loop(
                                 );
                             }
                             Err(err) => {
-                                // none of the execute errors are supposed to happen and none can
-                                // be handled by non-admin user
-                                println!("execute error {:?}", err);
+                                event!(Level::ERROR, "execute error {:?}", err);
                                 *state_marker.write().await =
-                                    QueryStateMarker::Failed(QueryError::ExecuteError);
+                                    QueryStateMarker::Failed(execute_error_to_query_error(err));
                             }
                         }
                     } else {
@@ -629,13 +660,13 @@ pub async fn planner_loop(
             Ok(plan) => {
                 // send to query executor
                 if let Err(err) = plan_tx.send((plan, state_marker.clone())).await {
-                    println!("failed to send plan {:?}", err);
+                    event!(Level::ERROR, "failed to send plan {:?}", err);
                     *state_marker.write().await =
                         QueryStateMarker::Failed(QueryError::Unknown(err.to_string()));
                 }
             }
             Err(err) => {
-                println!("failed to plan query {:?}", err);
+                event!(Level::ERROR, "failed to plan query {:?}", err);
                 *state_marker.write().await = QueryStateMarker::Failed(QueryError::PlanError(err));
             }
         }

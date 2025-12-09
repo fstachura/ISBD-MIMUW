@@ -4,6 +4,7 @@ use http::Method;
 use schema::{ColumnType, TableError};
 use std::{env::args, path::Path, process::ExitCode, str::FromStr, sync::Arc};
 use tokio::{sync::RwLock, time::Instant};
+use tracing::{Level, event};
 use uuid::Uuid;
 
 use crate::apis::{ErrorHandler, metadata::*, query::*, schema::*};
@@ -14,6 +15,7 @@ use crate::models::{
 };
 use crate::query_manager;
 use crate::query_manager::{QueryManager, QueryStateMarker};
+use crate::query_planner::QueryPlanError;
 use crate::schema_manager::SchemaError;
 use crate::{query_manager::QueryError, schema_manager::SchemaManager};
 
@@ -33,7 +35,7 @@ pub enum ApiError {
 impl ErrorHandler<ApiError> for ApiImpl {}
 
 fn into_unknown(err: impl std::error::Error) -> ApiError {
-    println!("got error {err}");
+    event!(Level::ERROR, "got unknown error {err}");
     ApiError::UnknownError("unknown".into())
 }
 
@@ -86,7 +88,91 @@ fn manager_query_to_model(query: &query_manager::Query) -> models::QueryQueryDef
 }
 
 fn query_error_to_problems(error: &QueryError) -> models::MultipleProblemsError {
-    models::MultipleProblemsError { problems: vec![] }
+    models::MultipleProblemsError {
+        problems: match error {
+            QueryError::TableDeleted => vec![models::MultipleProblemsErrorProblemsInner {
+                error: "table deleted".into(),
+                context: None,
+            }],
+            QueryError::WrongRecordSize {
+                table_name,
+                expected,
+                got,
+            } => vec![models::MultipleProblemsErrorProblemsInner {
+                error: format!("wrong record size in csv, expected {expected}, got {got}"),
+                context: Some(table_name.clone()),
+            }],
+            QueryError::FailedToParseCsv(file_path) => {
+                vec![models::MultipleProblemsErrorProblemsInner {
+                    error: format!("failed to parse csv"),
+                    context: file_path.clone(),
+                }]
+            }
+            QueryError::UnknownColumn(table_name, name) => {
+                vec![models::MultipleProblemsErrorProblemsInner {
+                    error: format!("unknown column {name}"),
+                    context: Some(table_name.clone()),
+                }]
+            }
+            QueryError::PlanError(QueryPlanError::UnknownColumns(table_name, columns)) => {
+                vec![models::MultipleProblemsErrorProblemsInner {
+                    error: "unknown columns: ".to_string() + &columns.as_slice().join(","),
+                    context: Some(table_name.clone()),
+                }]
+            }
+            QueryError::PlanError(QueryPlanError::UnknownTable(table)) => {
+                vec![models::MultipleProblemsErrorProblemsInner {
+                    error: "unknown table".into(),
+                    context: Some(table.clone()),
+                }]
+            }
+            QueryError::PlanError(QueryPlanError::WrongNumberOfColumnsInOrder {
+                table_name,
+                expected,
+                got,
+            }) => vec![models::MultipleProblemsErrorProblemsInner {
+                error: format!("wrong number of columns in order, expected {expected}, got {got}"),
+                context: Some(table_name.clone()),
+            }],
+            QueryError::PlanError(QueryPlanError::DuplicatedColumns(table_name, columns)) => {
+                vec![models::MultipleProblemsErrorProblemsInner {
+                    error: "duplicated columns: ".to_string() + &columns.as_slice().join(","),
+                    context: Some(table_name.clone()),
+                }]
+            }
+            QueryError::PlanError(QueryPlanError::FailedToOpenCsv(filename)) => {
+                vec![models::MultipleProblemsErrorProblemsInner {
+                    error: "failed to open csv file".into(),
+                    context: filename.clone(),
+                }]
+            }
+            QueryError::PlanError(QueryPlanError::FailedToParseCsv(filename)) => {
+                vec![models::MultipleProblemsErrorProblemsInner {
+                    error: "failed to parse csv file".into(),
+                    context: filename.clone(),
+                }]
+            }
+            QueryError::PlanError(QueryPlanError::TooManyColumnsInCsvAndNoOrder(
+                table,
+                filename,
+            )) => vec![models::MultipleProblemsErrorProblemsInner {
+                error: format!(
+                    "csv has more columns than table \"{table}\", but order was not specified"
+                ),
+                context: filename.clone(),
+            }],
+            QueryError::PlanError(QueryPlanError::UnknownError) => {
+                vec![models::MultipleProblemsErrorProblemsInner {
+                    error: format!("unknown error during planning, check logs"),
+                    context: None,
+                }]
+            }
+            QueryError::Unknown(_) => vec![models::MultipleProblemsErrorProblemsInner {
+                error: "unknown error, check logs".into(),
+                context: None,
+            }],
+        },
+    }
 }
 
 fn query_result_to_response(
@@ -212,7 +298,6 @@ impl QueryApi<ApiError> for ApiImpl {
                     status: query_state_marker_to_status(&query_state),
                     is_result_available: Some(match *query_state {
                         QueryStateMarker::Completed(_) => true,
-                        QueryStateMarker::Failed(_) => true,
                         _ => false,
                     }),
                     query_definition: Some(manager_query_to_model(&query.0)),
@@ -392,7 +477,7 @@ fn schema_error_to_model_problems(err: SchemaError) -> Option<MultipleProblemsEr
             }
         }
         _ => {
-            println!("encountered unknown error {err:?}");
+            event!(Level::ERROR, "encountered unknown error {err:?}");
             return None;
         }
     })

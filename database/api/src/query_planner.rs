@@ -7,6 +7,7 @@ use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{MutexGuard, RwLock, RwLockReadGuard, mpsc};
 use tokio::task::JoinHandle;
+use tracing::{Level, event};
 use uuid::Uuid;
 
 use crate::query_manager::{Query, QueryError, QueryManager, QueryStateMarker};
@@ -48,10 +49,18 @@ pub enum QueryPlan {
 
 #[derive(Clone, Debug)]
 pub enum QueryPlanError {
-    UnknownColumns(Vec<String>),
-    DuplicatedColumns(Vec<String>),
+    UnknownColumns(String, Vec<String>),
+    DuplicatedColumns(String, Vec<String>),
     UnknownTable(String),
-    WrongNumberOfColumnsInOrder { expected: usize, got: usize },
+    WrongNumberOfColumnsInOrder {
+        table_name: String,
+        expected: usize,
+        got: usize,
+    },
+    FailedToParseCsv(Option<String>),
+    FailedToOpenCsv(Option<String>),
+    TooManyColumnsInCsvAndNoOrder(String, Option<String>),
+    UnknownError,
 }
 
 pub async fn plan_query(
@@ -87,7 +96,51 @@ pub async fn plan_query(
             let schema = table_manager
                 .read_schema()
                 .await
-                .ok_or(QueryPlanError::UnknownTable(target))?;
+                .ok_or(QueryPlanError::UnknownTable(target.clone()))?;
+
+            let table_name = schema.table.name().clone();
+            let columns_num = schema.table.columns().len();
+            let columns_is_none = columns.is_none();
+            let source_tmp = source.clone();
+
+            let csv_check_result = tokio::task::spawn_blocking(move || {
+                let mut reader = csv::ReaderBuilder::new()
+                    .delimiter(b';')
+                    .has_headers(contains_header)
+                    .from_path(source_tmp.clone())
+                    .map_err(|e| {
+                        QueryPlanError::FailedToOpenCsv(source_tmp.to_str().map(|v| v.to_string()))
+                    })?;
+
+                match reader.records().next() {
+                    Some(Ok(record)) => {
+                        if record.len() > columns_num && columns_is_none {
+                            Err(QueryPlanError::TooManyColumnsInCsvAndNoOrder(
+                                table_name,
+                                source_tmp.to_str().map(|v| v.to_string()),
+                            ))
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    err => {
+                        event!(Level::ERROR, "failed to open csv file in planner {err:?}");
+                        Err(QueryPlanError::FailedToParseCsv(
+                            source_tmp.to_str().map(|v| v.to_string()),
+                        ))
+                    }
+                }
+            })
+            .await;
+
+            if let Err(err) = csv_check_result {
+                event!(Level::ERROR, "failed to join csv check task {err:?}");
+                return Err(QueryPlanError::UnknownError);
+            }
+
+            if let Ok(Err(err)) = csv_check_result {
+                return Err(err);
+            }
 
             let mut column_order: Vec<String> = Vec::new();
             let mut unknown_columns = Vec::new();
@@ -95,8 +148,9 @@ pub async fn plan_query(
             if let Some(columns) = columns {
                 if schema.table.columns().len() != columns.len() {
                     return Err(QueryPlanError::WrongNumberOfColumnsInOrder {
-                        expected: columns.len(),
-                        got: schema.table.columns().len(),
+                        table_name: target.clone(),
+                        expected: schema.table.columns().len(),
+                        got: columns.len(),
                     });
                 }
 
@@ -121,11 +175,17 @@ pub async fn plan_query(
             }
 
             if !unknown_columns.is_empty() {
-                return Err(QueryPlanError::UnknownColumns(unknown_columns));
+                return Err(QueryPlanError::UnknownColumns(
+                    target.clone(),
+                    unknown_columns,
+                ));
             }
 
             if !duplicated_columns.is_empty() {
-                return Err(QueryPlanError::DuplicatedColumns(duplicated_columns));
+                return Err(QueryPlanError::DuplicatedColumns(
+                    target.clone(),
+                    duplicated_columns,
+                ));
             }
 
             Ok(QueryPlan::Copy {

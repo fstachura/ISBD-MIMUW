@@ -1,4 +1,3 @@
-use schema::{ColumnType, Table, TableError};
 use std::{
     collections::HashMap,
     error::Error,
@@ -15,6 +14,9 @@ use tokio::{
     },
     task::spawn_blocking,
 };
+use tracing::{Level, event};
+
+use schema::{ColumnType, Table, TableError};
 
 #[derive(Debug)]
 pub struct LockedTable {
@@ -279,7 +281,7 @@ impl SchemaManager {
         for col in table.table.columns() {
             for path in col.get_file_paths(&self.data_dir) {
                 if let Err(err) = tokio::fs::remove_file(path.clone()).await {
-                    println!("failed to remove column file {:?}", path);
+                    event!(Level::ERROR, "failed to remove column file {:?}", path);
                 }
             }
         }
