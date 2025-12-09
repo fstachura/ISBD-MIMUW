@@ -114,10 +114,14 @@ fn query_error_to_problems(error: &QueryError) -> models::MultipleProblemsError 
                     context: Some(table_name.clone()),
                 }]
             }
-            QueryError::PlanError(QueryPlanError::UnknownColumns(table_name, columns)) => {
+            QueryError::PlanError(QueryPlanError::UnknownColumns { table_or_filename, column_order_from_header, columns }) => {
                 vec![models::MultipleProblemsErrorProblemsInner {
-                    error: "unknown columns: ".to_string() + &columns.as_slice().join(","),
-                    context: Some(table_name.clone()),
+                    error: if *column_order_from_header {
+                        "unknown columns in csv header: ".to_string()
+                    } else {
+                        "unknown columns in column order : ".to_string()
+                    }  + &columns.as_slice().join(","),
+                    context: Some(table_or_filename.clone()),
                 }]
             }
             QueryError::PlanError(QueryPlanError::UnknownTable(table)) => {
@@ -127,17 +131,26 @@ fn query_error_to_problems(error: &QueryError) -> models::MultipleProblemsError 
                 }]
             }
             QueryError::PlanError(QueryPlanError::WrongNumberOfColumnsInOrder {
-                table_name,
+                table_or_filename,
+                column_order_from_header,
                 expected,
                 got,
             }) => vec![models::MultipleProblemsErrorProblemsInner {
-                error: format!("wrong number of columns in order, expected {expected}, got {got}"),
-                context: Some(table_name.clone()),
+                error: if *column_order_from_header {
+                    format!("wrong number of columns in csv header, expected {expected}, got {got}")
+                } else {
+                    format!("wrong number of columns in column order, expected {expected}, got {got}")
+                },
+                context: Some(table_or_filename.clone()),
             }],
-            QueryError::PlanError(QueryPlanError::DuplicatedColumns(table_name, columns)) => {
+            QueryError::PlanError(QueryPlanError::DuplicatedColumns { table_or_filename, column_order_from_header, columns }) => {
                 vec![models::MultipleProblemsErrorProblemsInner {
-                    error: "duplicated columns: ".to_string() + &columns.as_slice().join(","),
-                    context: Some(table_name.clone()),
+                    error: if *column_order_from_header {
+                        "duplicated columns in csv header: ".to_string()
+                    } else {
+                        "duplicated columns in column order: ".to_string()
+                    } + &columns.as_slice().join(","),
+                    context: Some(table_or_filename.clone()),
                 }]
             }
             QueryError::PlanError(QueryPlanError::FailedToOpenCsv(filename)) => {
