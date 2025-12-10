@@ -39,8 +39,8 @@ use crate::schema_manager::SchemaManager;
 #[tokio::main]
 async fn main() -> ExitCode {
     let mut args = args();
-    if args.len() < 3 {
-        println!("usage: (init|serve) data_dir");
+    if args.len() < 3 || args.len() > 4 {
+        println!("usage: (init|serve) data_dir [ip:port]");
         return ExitCode::FAILURE;
     }
 
@@ -63,6 +63,10 @@ async fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         "serve" => {
+            let sock_addr = args
+                .next()
+                .unwrap_or("127.0.0.1:3000".into());
+
             let (qm, query_receiver) = QueryManager::new();
             let sm = SchemaManager::new(
                 (data_dir.clone() + "/schema").into(),
@@ -80,10 +84,20 @@ async fn main() -> ExitCode {
             });
 
             let app = server::new(api);
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+            let listener = tokio::net::TcpListener::bind(sock_addr.clone())
                 .await
                 .unwrap();
-            axum::serve(listener, app).await.unwrap();
+
+            event!(Level::INFO, "database listening on {sock_addr}");
+
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    tokio::signal::ctrl_c().await.unwrap();
+                    event!(Level::INFO, "caught ctrl+c, quitting");
+                })
+                .await
+                .unwrap();
+
             qe_handle.await.unwrap();
         }
         _ => {

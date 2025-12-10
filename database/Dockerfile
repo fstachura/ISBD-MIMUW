@@ -9,5 +9,5 @@ FROM debian:trixie-slim
 COPY --from=builder /usr/local/cargo/bin/api /usr/local/bin/api
 RUN mkdir /data
 RUN api init /data
-CMD ["bash", "-c", "api init /data && api serve /data"]
-
+ENTRYPOINT ["bash", "-c", "api init /data && api serve /data 0.0.0.0:3000"]
+EXPOSE 3000/tcp
