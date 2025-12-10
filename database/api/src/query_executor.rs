@@ -481,8 +481,6 @@ async fn execute_select(
     data_dir: &PathBuf,
     columns: &Vec<Column>,
 ) -> Result<Vec<SelectResult>, ExecuteError> {
-    event!(Level::INFO, "starting to execute select");
-
     let mut column_file_tasks = start_reading_column_files(data_dir, columns).await?;
 
     // join read tasks and handle results
@@ -549,7 +547,6 @@ async fn execute_select(
             }
         }
 
-        event!(Level::INFO, "select exec done");
         Ok(result)
     }
 }
