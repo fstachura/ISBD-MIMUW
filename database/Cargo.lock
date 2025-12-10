@@ -21,6 +21,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "api"
+version = "1.0.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "axum-extra",
+ "base64",
+ "bytes",
+ "chrono",
+ "csv",
+ "format",
+ "frunk",
+ "frunk-enum-core",
+ "frunk-enum-derive",
+ "frunk_core",
+ "frunk_derives",
+ "http",
+ "itertools 0.14.0",
+ "lazy_static",
+ "regex",
+ "schema",
+ "serde",
+ "serde_html_form",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "validator",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -825,40 +859,6 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
-
-[[package]]
-name = "openapi"
-version = "1.0.1"
-dependencies = [
- "async-trait",
- "axum",
- "axum-extra",
- "base64",
- "bytes",
- "chrono",
- "csv",
- "format",
- "frunk",
- "frunk-enum-core",
- "frunk-enum-derive",
- "frunk_core",
- "frunk_derives",
- "http",
- "itertools 0.14.0",
- "lazy_static",
- "regex",
- "schema",
- "serde",
- "serde_html_form",
- "serde_json",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "validator",
-]
 
 [[package]]
 name = "percent-encoding"

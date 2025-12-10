@@ -1,5 +1,5 @@
 [package]
-name = "openapi"
+name = "api"
 version = "1.0.1"
 authors = ["OpenAPI Generator team and contributors"]
 description = "This file describes interface between DBMS system and user."
